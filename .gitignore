@@ -15,6 +15,7 @@ build/
 
 # Credentials and secrets
 credentials.json
+service_account.json
 token.pickle
 
 # IDE specific files
