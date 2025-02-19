@@ -9,6 +9,13 @@ from datetime import datetime
 import hashlib
 from src.data_validation import DataValidator
 
+def format_scientific(value):
+    """Format scientific notation values in a consistent, readable way"""
+    if abs(value) < 1e-6 or abs(value) > 1e4:
+        return f"{value:.2e}".replace('e-0', 'e-').replace('e+0', 'e')
+    else:
+        return f"{value:.3f}"
+
 class ExperimentalDataManager:
     def __init__(self, db_path='database/experiment_data.db', data_dir='sample_data'):
         """
@@ -178,10 +185,10 @@ class ExperimentalDataManager:
         """
         # Create a deterministic but human-readable run ID
         run_components = [
-            f"SW{params['s_width']:.1f}",
-            f"SA{params['s_amplitude']:.1f}",
-            f"F{params['field']:.1f}",
-            datetime.now().strftime("%Y%m%d")
+            f"SW{format_scientific(params['s_width'])}",
+            f"SA{format_scientific(params['s_amplitude'])}",
+            f"F{format_scientific(params['field'])}"
+            #datetime.now().strftime("%Y%m%d")
         ]
         base_run_id = "_".join(run_components)
         
@@ -336,6 +343,43 @@ class ExperimentalDataManager:
                          's_width', 'field', 'source', 'repeats']].iloc[0]
             
             return pd.concat([metadata.to_frame().T, df_wide], axis=1)
+
+    def delete_run(self, run_id: str) -> bool:
+        """
+        Delete a specific run and its associated measurements from the database.
+        
+        Parameters:
+        -----------
+        run_id : str
+            The run_id to delete
+            
+        Returns:
+        --------
+        bool
+            True if run was found and deleted, False otherwise
+        """
+        self.logger.info(f"Attempting to delete run {run_id}")
+        
+        with sqlite3.connect(self.db_path) as conn:
+            # First verify the run exists
+            exists = conn.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?", 
+                (run_id,)
+            ).fetchone()
+            
+            if not exists:
+                self.logger.warning(f"Run {run_id} not found in database")
+                return False
+            
+            # Delete associated measurements first (due to foreign key constraint)
+            conn.execute("DELETE FROM measurements WHERE run_id = ?", (run_id,))
+            
+            # Then delete the run itself
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            conn.commit()
+            
+            self.logger.info(f"Successfully deleted run {run_id} and its measurements")
+            return True
 
 # Example usage
 if __name__ == "__main__":
