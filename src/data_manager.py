@@ -44,34 +44,84 @@ class ExperimentalDataManager:
         # Initialize database
         self.initialize_database()
     
+    # def initialize_database(self):
+    #     """Create the database schema if it doesn't exist."""
+    #     self.logger.info("Initializing database...")
+        
+    #     with sqlite3.connect(self.db_path) as conn:
+    #         # Create runs table with new identifier fields
+    #         conn.execute('''
+    #             CREATE TABLE IF NOT EXISTS runs (
+    #                 run_id TEXT PRIMARY KEY,  -- Changed to TEXT for compound identifier
+    #                 run_hash TEXT UNIQUE,     -- Added for data integrity
+    #                 filename TEXT UNIQUE,
+    #                 hz REAL,
+    #                 row_number INTEGER,
+    #                 r_amplitude REAL,
+    #                 r_width REAL,
+    #                 s_amplitude REAL,
+    #                 s_width REAL,
+    #                 field REAL,
+    #                 source REAL,
+    #                 repeats INTEGER,
+    #                 import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    #             )
+    #         ''')
+            
+    #         conn.execute('''
+    #             CREATE TABLE IF NOT EXISTS measurements (
+    #                 measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    #                 run_id TEXT,              -- Changed to TEXT to match runs table
+    #                 data_point REAL,
+    #                 point_index INTEGER,
+    #                 FOREIGN KEY (run_id) REFERENCES runs(run_id)
+    #             )
+    #         ''')
+
     def initialize_database(self):
-        """Create the database schema if it doesn't exist."""
+        """Create or update the database schema."""
         self.logger.info("Initializing database...")
         
         with sqlite3.connect(self.db_path) as conn:
-            # Create runs table with new identifier fields
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS runs (
-                    run_id TEXT PRIMARY KEY,  -- Changed to TEXT for compound identifier
-                    run_hash TEXT UNIQUE,     -- Added for data integrity
-                    filename TEXT UNIQUE,
-                    hz REAL,
-                    row_number INTEGER,
-                    r_amplitude REAL,
-                    r_width REAL,
-                    s_amplitude REAL,
-                    s_width REAL,
-                    field REAL,
-                    source REAL,
-                    repeats INTEGER,
-                    import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            # First, check if the runs table exists and its current structure
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='runs'")
+            table_exists = cursor.fetchone() is not None
             
+            if table_exists:
+                # Check if run_hash column exists
+                cursor.execute("PRAGMA table_info(runs)")
+                columns = [info[1] for info in cursor.fetchall()]
+                
+                if 'run_hash' not in columns:
+                    self.logger.info("Updating database schema to include run_hash...")
+                    # Add the run_hash column
+                    conn.execute("ALTER TABLE runs ADD COLUMN run_hash TEXT UNIQUE")
+            else:
+                # Create new table with current schema
+                conn.execute('''
+                    CREATE TABLE runs (
+                        run_id TEXT PRIMARY KEY,
+                        run_hash TEXT UNIQUE,
+                        filename TEXT UNIQUE,
+                        hz REAL,
+                        row_number INTEGER,
+                        r_amplitude REAL,
+                        r_width REAL,
+                        s_amplitude REAL,
+                        s_width REAL,
+                        field REAL,
+                        source REAL,
+                        repeats INTEGER,
+                        import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+            # Always ensure measurements table exists
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
                     measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT,              -- Changed to TEXT to match runs table
+                    run_id TEXT,
                     data_point REAL,
                     point_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
@@ -323,26 +373,35 @@ class ExperimentalDataManager:
     def get_run_with_measurements(self, run_id):
         """Get a single run with all its measurements as a wide-format DataFrame"""
         with sqlite3.connect(self.db_path) as conn:
-            query = """
-            SELECT r.*, m.data_point, m.point_index
-            FROM runs r
-            JOIN measurements m ON r.run_id = m.run_id
-            WHERE r.run_id = ?
+            # First get the run metadata
+            run_query = "SELECT * FROM runs WHERE run_id = ?"
+            run_df = pd.read_sql_query(run_query, conn, params=[run_id])
+            
+            if run_df.empty:
+                return None
+                
+            # Then get the measurements
+            measurements_query = """
+            SELECT point_index, data_point
+            FROM measurements 
+            WHERE run_id = ?
+            ORDER BY point_index
             """
-            # Get the data
-            df = pd.read_sql_query(query, conn, params=[run_id])
+            measurements_df = pd.read_sql_query(measurements_query, conn, params=[run_id])
             
-            # Pivot to wide format
-            df_wide = df.pivot(index='run_id', 
-                             columns='point_index', 
-                             values='data_point')
+            # Convert measurements to wide format
+            if not measurements_df.empty:
+                # Create measurement columns with prefix 'point_'
+                measurements_wide = pd.DataFrame(
+                    [measurements_df['data_point'].values],
+                    columns=[f'point_{i}' for i in measurements_df['point_index']]
+                )
+                
+                # Combine run metadata with measurements
+                result = pd.concat([run_df, measurements_wide], axis=1)
+                return result
             
-            # Add back the run metadata
-            metadata = df[['run_id', 'filename', 'hz', 'row_number', 
-                         'r_amplitude', 'r_width', 's_amplitude', 
-                         's_width', 'field', 'source', 'repeats']].iloc[0]
-            
-            return pd.concat([metadata.to_frame().T, df_wide], axis=1)
+            return run_df
 
     def delete_run(self, run_id: str) -> bool:
         """
@@ -382,6 +441,24 @@ class ExperimentalDataManager:
             return True
 
 # Example usage
+# if __name__ == "__main__":
+#     # Initialize data manager
+#     dm = ExperimentalDataManager()
+    
+#     # Import all files from sample_data directory
+#     dm.import_directory()
+    
+#     # Get all runs
+#     runs = dm.get_runs()
+#     print("\nAvailable runs:")
+#     print(runs)
+    
+#     if not runs.empty:
+#         # Get first run with measurements
+#         first_run_id = runs['run_id'].iloc[0]
+#         run_data = dm.get_run_with_measurements(first_run_id)
+#         print("\nFirst run data:")
+#         print(run_data)
 if __name__ == "__main__":
     # Initialize data manager
     dm = ExperimentalDataManager()
@@ -392,11 +469,23 @@ if __name__ == "__main__":
     # Get all runs
     runs = dm.get_runs()
     print("\nAvailable runs:")
-    print(runs)
-    
+    # Display key columns in a readable format
     if not runs.empty:
+        display_cols = ['run_id', 'filename', 's_width', 's_amplitude', 'field', 'repeats']
+        print(runs[display_cols].to_string())
+        print(f"\nTotal runs: {len(runs)}")
+        
         # Get first run with measurements
         first_run_id = runs['run_id'].iloc[0]
         run_data = dm.get_run_with_measurements(first_run_id)
-        print("\nFirst run data:")
-        print(run_data)
+        
+        if run_data is not None:
+            print("\nFirst run metadata:")
+            # Display metadata columns
+            metadata_cols = [col for col in run_data.columns if not col.startswith('point_')]
+            print(run_data[metadata_cols].to_string())
+            
+            print("\nMeasurement summary:")
+            measurement_cols = [col for col in run_data.columns if col.startswith('point_')]
+            measurements = run_data[measurement_cols].iloc[0]
+            print(f"Number of measurements: {len(measurements)}")
