@@ -26,5 +26,6 @@ token.pickle
 .DS_Store
 Thumbs.db
 
-#Specific files
-sample_data
+#Data files
+sample_data/
+database/
