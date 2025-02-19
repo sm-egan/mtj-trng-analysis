@@ -42,10 +42,11 @@ class ExperimentalDataManager:
         self.logger.info("Initializing database...")
         
         with sqlite3.connect(self.db_path) as conn:
-            # Create runs table
+            # Create runs table with new identifier fields
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS runs (
-                    run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT PRIMARY KEY,  -- Changed to TEXT for compound identifier
+                    run_hash TEXT UNIQUE,     -- Added for data integrity
                     filename TEXT UNIQUE,
                     hz REAL,
                     row_number INTEGER,
@@ -56,15 +57,14 @@ class ExperimentalDataManager:
                     field REAL,
                     source REAL,
                     repeats INTEGER,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
-            # Create measurements table
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
                     measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id INTEGER,
+                    run_id TEXT,              -- Changed to TEXT to match runs table
                     data_point REAL,
                     point_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
@@ -160,106 +160,116 @@ class ExperimentalDataManager:
             
         return params
 
-    def is_run_in_database(self, metadata: Dict, measurements: np.ndarray) -> Tuple[bool, Optional[int]]:
+    def generate_run_id(self, params: Dict, measurements: np.ndarray) -> Tuple[str, str]:
         """
-        Check if a run with identical metadata and measurements exists in database.
+        Generate a compound run identifier and hash.
         
         Parameters:
         -----------
-        metadata : dict
-            Run metadata
-        measurements : numpy.ndarray
-            Run measurements
+        params : dict
+            Dictionary of experimental parameters
+        measurements : np.ndarray
+            Array of measurement data
             
         Returns:
         --------
         tuple
-            (bool: whether run exists, Optional[int]: existing run_id if found)
+            (run_id, run_hash)
         """
-        # Get all existing runs
-        existing_runs = self.get_runs()
+        # Create a deterministic but human-readable run ID
+        run_components = [
+            f"SW{params['s_width']:.1f}",
+            f"SA{params['s_amplitude']:.1f}",
+            f"F{params['field']:.1f}",
+            datetime.now().strftime("%Y%m%d")
+        ]
+        base_run_id = "_".join(run_components)
         
-        for _, run in existing_runs.iterrows():
-            run_measurements = self.get_measurements(run['run_id'])['data_point'].values
-            
-            identical, _ = self.validator.are_runs_identical(
-                metadata,
-                measurements,
-                run.to_dict(),
-                run_measurements
-            )
-            
-            if identical:
-                return True, run['run_id']
-                
-        return False, None
+        # Get run identity from validator
+        run_identity = self.validator.compute_run_identity(params, measurements)
+        if not run_identity.is_valid:
+            raise ValueError(f"Invalid run data: {run_identity.validation_message}")
+        
+        # Keep trying different hash lengths if we get a collision
+        hash_length = 6
+        while True:
+            proposed_run_id = f"{base_run_id}_{run_identity.full_hash[:hash_length]}"
+            # Check if this ID already exists
+            with sqlite3.connect(self.db_path) as conn:
+                existing = conn.execute(
+                    "SELECT 1 FROM runs WHERE run_id = ?", 
+                    (proposed_run_id,)
+                ).fetchone()
+                if not existing:
+                    break
+                hash_length += 1
+                if hash_length > 12:  # Safeguard against infinite loop
+                    raise ValueError("Unable to generate unique run_id")
+        
+        return proposed_run_id, run_identity.full_hash
 
     def import_data_file(self, filepath):
-        """Enhanced version of import_data_file with validation"""
+        """Enhanced version of import_data_file with hash-based IDs"""
         filepath = Path(filepath)
+        if not filepath.exists():
+            raise FileNotFoundError(f"Data file not found: {filepath}")
         
         # Validate filename format
         if not self.validator.is_valid_filename(filepath.name):
             self.logger.warning(f"Skipping file with invalid format: {filepath.name}")
             return None
-            
-        # Parse parameters and read data
-        params = self.parse_filename(filepath.name)
-        data = pd.read_csv(filepath, header=None, sep='\t').iloc[0].values
-        
-        # Check if run already exists
-        exists, existing_run_id = self.is_run_in_database(params, data)
-        if exists:
-            self.logger.info(f"Skipping duplicate run (existing run_id: {existing_run_id})")
-            return existing_run_id
-        
-    def import_data_file(self, filepath):
-        """
-        Import a single data file into the database.
-        
-        Parameters:
-        -----------
-        filepath : str or Path
-            Path to the data file
-        """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f"Data file not found: {filepath}")
-        
-        self.logger.info(f"Importing data from {filepath}")
         
         # Parse parameters from filename
         params = self.parse_filename(filepath.name)
         
         # Read the data points
-        data = pd.read_csv(filepath, header=None, sep='\t').iloc[0]
+        data = pd.read_csv(filepath, header=None, sep='\t').iloc[0].values
         
+        # Generate run ID and hash
+        try:
+            run_id, run_hash = self.generate_run_id(params, data)
+        except ValueError as e:
+            self.logger.error(f"Error generating run ID: {e}")
+            return None
+        
+        # Check if run hash already exists
         with sqlite3.connect(self.db_path) as conn:
-            # Insert run metadata
+            existing = conn.execute(
+                "SELECT run_id FROM runs WHERE run_hash = ?", 
+                (run_hash,)
+            ).fetchone()
+            
+            if existing:
+                self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
+                return existing[0]
+        
+        # Insert new run
+        with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
+            
+            # Insert run metadata
             cursor.execute('''
-                INSERT OR REPLACE INTO runs 
-                (filename, hz, row_number, r_amplitude, r_width, s_amplitude, 
-                 s_width, field, source, repeats)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO runs 
+                (run_id, run_hash, filename, hz, row_number, r_amplitude, r_width,
+                 s_amplitude, s_width, field, source, repeats)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                filepath.name, params['hz'], params['row'], 
+                run_id, run_hash, filepath.name,
+                params['hz'], params['row'],
                 params['r_amplitude'], params['r_width'],
                 params['s_amplitude'], params['s_width'],
                 params['field'], params['source'], params['repeats']
             ))
             
-            run_id = cursor.lastrowid
-            
             # Insert measurements
             measurements = [(run_id, float(value), idx) 
-                          for idx, value in enumerate(data)]
+                           for idx, value in enumerate(data)]
             
             conn.executemany('''
                 INSERT INTO measurements (run_id, data_point, point_index)
                 VALUES (?, ?, ?)
             ''', measurements)
-            
+        
         self.logger.info(f"Successfully imported run {run_id}")
         return run_id
         
