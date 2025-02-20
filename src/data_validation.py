@@ -28,10 +28,56 @@ class DataValidator:
         self.filename_pattern = filename_pattern
         self.logger = logging.getLogger(__name__)
     
+    # def compute_run_identity(self, 
+    #                        metadata: Dict, 
+    #                        measurements: np.ndarray,
+    #                        hash_length: int = 12) -> RunIdentity:
+    #     """
+    #     Compute run identity and validate data integrity.
+        
+    #     Parameters:
+    #     -----------
+    #     metadata : dict
+    #         Dictionary containing run metadata
+    #     measurements : numpy.ndarray
+    #         Array of measurement values
+    #     hash_length : int
+    #         Length of the short hash to return
+            
+    #     Returns:
+    #     --------
+    #     RunIdentity
+    #         Object containing hash information and validation status
+    #     """
+    #     # Check for NaN or infinite values in measurements
+    #     if not np.all(np.isfinite(measurements)):
+    #         return RunIdentity(
+    #             full_hash="",
+    #             short_hash="",
+    #             is_valid=False,
+    #             validation_message="Measurements contain NaN or infinite values"
+    #         )
+        
+    #     # Create deterministic string representation of data
+    #     metadata_str = '_'.join(f"{k}:{v}" for k, v in sorted(metadata.items()))
+    #     measurements_str = '_'.join(f"{x:.6f}" for x in measurements)
+    #     content_to_hash = f"{metadata_str}|{measurements_str}"
+        
+    #     # Compute full hash
+    #     full_hash = hashlib.sha256(content_to_hash.encode()).hexdigest()
+    #     short_hash = full_hash[:hash_length]
+        
+    #     return RunIdentity(
+    #         full_hash=full_hash,
+    #         short_hash=short_hash,
+    #         is_valid=True,
+    #         validation_message="Data validated successfully"
+    #     )
     def compute_run_identity(self, 
-                           metadata: Dict, 
-                           measurements: np.ndarray,
-                           hash_length: int = 12) -> RunIdentity:
+                            metadata: Dict, 
+                            measurements: np.ndarray,
+                            hash_length: int = 12,
+                            n_points: int = 1000) -> RunIdentity:
         """
         Compute run identity and validate data integrity.
         
@@ -43,14 +89,12 @@ class DataValidator:
             Array of measurement values
         hash_length : int
             Length of the short hash to return
-            
-        Returns:
-        --------
-        RunIdentity
-            Object containing hash information and validation status
+        n_points : int
+            Number of points to use for hash computation
         """
-        # Check for NaN or infinite values in measurements
-        if not np.all(np.isfinite(measurements)):
+        # Check for NaN or infinite values in first n_points
+        check_measurements = measurements[:n_points]
+        if not np.all(np.isfinite(check_measurements)):
             return RunIdentity(
                 full_hash="",
                 short_hash="",
@@ -60,7 +104,7 @@ class DataValidator:
         
         # Create deterministic string representation of data
         metadata_str = '_'.join(f"{k}:{v}" for k, v in sorted(metadata.items()))
-        measurements_str = '_'.join(f"{x:.6f}" for x in measurements)
+        measurements_str = '_'.join(f"{x:.6f}" for x in check_measurements)
         content_to_hash = f"{metadata_str}|{measurements_str}"
         
         # Compute full hash

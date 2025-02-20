@@ -11,10 +11,14 @@ from src.data_validation import DataValidator
 
 def format_scientific(value):
     """Format scientific notation values in a consistent, readable way"""
-    if abs(value) < 1e-6 or abs(value) > 1e4:
-        return f"{value:.2e}".replace('e-0', 'e-').replace('e+0', 'e')
-    else:
-        return f"{value:.3f}"
+    try:
+        if abs(value) < 1e-6 or abs(value) > 1e4:
+            return f"{value:.2e}".replace('e-0', 'e-').replace('e+0', 'e')
+        else:
+            return f"{value:.3f}"
+    except Exception as e:
+        # If formatting fails, return simple string conversion
+        return str(value)
 
 class ExperimentalDataManager:
     def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data'):
@@ -35,7 +39,7 @@ class ExperimentalDataManager:
         self.db_path.parent.mkdir(exist_ok=True)
         
         # Set up logging
-        logging.basicConfig(level=logging.INFO,
+        logging.basicConfig(level=logging.DEBUG,
                           format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
@@ -160,6 +164,18 @@ class ExperimentalDataManager:
             'source': r'Source([\d.E+-]+)',
             'repeats': r'Repeats([\d.E+-]+)'
         }
+
+        patterns = {
+            'hz': r'Hz_(\d+)',
+            'row': r'Row\s*(\d+)',
+            'r_amplitude': r'RAmp([+-]?[\d.E+-]+)',  # Modified to handle +/- in any position
+            'r_width': r'RWid([\d.E+-]+)',
+            's_amplitude': r'SAmp([+-]?[\d.E+-]+)',  # Also fix this for consistency
+            's_width': r'SWid([\d.E+-]+)',
+            'field': r'Field([\d.E+-]+)',
+            'source': r'Source([\d.E+-]+)',
+            'repeats': r'Repeats([\d.E+-]+)'
+        }
         
         params = {}
 
@@ -236,36 +252,86 @@ class ExperimentalDataManager:
             (run_id, run_hash)
         """
         # Create a deterministic but human-readable run ID
+        # run_components = [
+        #     f"D{params.get('device_id')}" if params.get('device_id') else "",
+        #     f"SW{format_scientific(params['s_width'])}",
+        #     f"SA{format_scientific(params['s_amplitude'])}",
+        #     f"F{format_scientific(params['field'])}"
+        #     #datetime.now().strftime("%Y%m%d")
+        # ]
+        # base_run_id = "_".join(run_components)
+        
+        # # Get run identity from validator
+        # run_identity = self.validator.compute_run_identity(params, measurements)
+        # if not run_identity.is_valid:
+        #     raise ValueError(f"Invalid run data: {run_identity.validation_message}")
+        
+        # # Keep trying different hash lengths if we get a collision
+        # hash_length = 6
+        # while True:
+        #     proposed_run_id = f"{base_run_id}_{run_identity.full_hash[:hash_length]}"
+            
+        #     # Check if this ID exists with different data
+        #     with sqlite3.connect(self.db_path) as conn:
+        #         existing = conn.execute(
+        #             "SELECT run_hash FROM runs WHERE run_id = ?", 
+        #             (proposed_run_id,)
+        #         ).fetchone()
+                
+        #         if not existing or existing[0] == run_identity.full_hash:
+        #             # No collision or exact match found
+        #             break
+                    
+        #         hash_length += 1
+        #         if hash_length > 12:  # Safeguard against infinite loop
+        #             raise ValueError("Unable to generate unique run_id")
+        
+        # return proposed_run_id, run_identity.full_hash
+
         run_components = [
             f"D{params.get('device_id')}" if params.get('device_id') else "",
             f"SW{format_scientific(params['s_width'])}",
             f"SA{format_scientific(params['s_amplitude'])}",
             f"F{format_scientific(params['field'])}"
-            #datetime.now().strftime("%Y%m%d")
         ]
-        base_run_id = "_".join(run_components)
+        base_run_id = "_".join(x for x in run_components if x)
+        self.logger.debug(f"Generated base_run_id: {base_run_id}")
         
-        # Get run identity from validator
+        # Get run identity hash
         run_identity = self.validator.compute_run_identity(params, measurements)
         if not run_identity.is_valid:
             raise ValueError(f"Invalid run data: {run_identity.validation_message}")
+        
+        self.logger.debug(f"Generated initial hash: {run_identity.full_hash}")
         
         # Keep trying different hash lengths if we get a collision
         hash_length = 6
         while True:
             proposed_run_id = f"{base_run_id}_{run_identity.full_hash[:hash_length]}"
-            # Check if this ID already exists
+            self.logger.debug(f"Trying proposed_run_id: {proposed_run_id}")
+            
+            # Check if this ID exists with different data
             with sqlite3.connect(self.db_path) as conn:
                 existing = conn.execute(
-                    "SELECT 1 FROM runs WHERE run_id = ?", 
+                    "SELECT run_hash FROM runs WHERE run_id = ?", 
                     (proposed_run_id,)
                 ).fetchone()
+                
+                self.logger.debug(f"Database query result: {existing}")
+                
                 if not existing:
+                    self.logger.debug("No existing run_id found")
                     break
-                hash_length += 1
-                if hash_length > 12:  # Safeguard against infinite loop
-                    raise ValueError("Unable to generate unique run_id")
+                elif existing[0] == run_identity.full_hash:
+                    self.logger.debug("Found exact match")
+                    break
+                else:
+                    self.logger.debug(f"Found collision, extending hash length to {hash_length + 1}")
+                    hash_length += 1
+                    if hash_length > 12:  # Safeguard against infinite loop
+                        raise ValueError("Unable to generate unique run_id")
         
+        self.logger.debug(f"Final run_id: {proposed_run_id}")
         return proposed_run_id, run_identity.full_hash
 
     def import_data_file(self, filepath):
@@ -288,7 +354,24 @@ class ExperimentalDataManager:
             params['device_id'] = device_id
         
         # Read the data points
-        data = np.loadtxt(filepath, delimiter='\t')
+        #data = np.loadtxt(filepath, delimiter='\t')
+        try:
+        # First try reading with numpy
+            data = np.loadtxt(filepath, delimiter='\t')
+        except ValueError as e:
+            # If that fails, try pandas which is more forgiving
+            try:
+                df = pd.read_csv(filepath, delimiter='\t', header=None)
+                # Get first row that has the expected number of columns
+                max_cols = df.shape[1]
+                valid_data = df[df.notna().sum(axis=1) == max_cols]
+                if len(valid_data) > 0:
+                    data = valid_data.iloc[0].values
+                else:
+                    raise ValueError("No valid data rows found")
+            except Exception as e2:
+                self.logger.error(f"Error reading data from {filepath}: {str(e2)}")
+                raise
         
         # Generate run ID and hash
         try:
