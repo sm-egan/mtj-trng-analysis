@@ -103,6 +103,7 @@ class ExperimentalDataManager:
                     CREATE TABLE runs (
                         run_id TEXT PRIMARY KEY,
                         run_hash TEXT UNIQUE,
+                        device_id TEXT,
                         filename TEXT UNIQUE,
                         hz REAL,
                         row_number INTEGER,
@@ -161,6 +162,7 @@ class ExperimentalDataManager:
         }
         
         params = {}
+
         for key, pattern in patterns.items():
             try:
                 match = re.search(pattern, name_to_parse)
@@ -235,6 +237,7 @@ class ExperimentalDataManager:
         """
         # Create a deterministic but human-readable run ID
         run_components = [
+            f"D{params.get('device_id')}" if params.get('device_id') else "",
             f"SW{format_scientific(params['s_width'])}",
             f"SA{format_scientific(params['s_amplitude'])}",
             f"F{format_scientific(params['field'])}"
@@ -270,7 +273,10 @@ class ExperimentalDataManager:
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Data file not found: {filepath}")
-        
+
+        # Get device ID from parent folder name if it exists
+        device_id = filepath.parent.name.split("Device_")[1] if filepath.parent.name.startswith('Device_') else None
+
         # Validate filename format
         if not self.validator.is_valid_filename(filepath.name):
             self.logger.warning(f"Skipping file with invalid format: {filepath.name}")
@@ -278,6 +284,8 @@ class ExperimentalDataManager:
         
         # Parse parameters from filename
         params = self.parse_filename(filepath.name)
+        if device_id:
+            params['device_id'] = device_id
         
         # Read the data points
         data = np.loadtxt(filepath, delimiter='\t')
@@ -314,11 +322,13 @@ class ExperimentalDataManager:
                 # Insert run metadata
                 cursor.execute('''
                     INSERT INTO runs 
-                    (run_id, run_hash, filename, hz, row_number, r_amplitude, r_width,
+                    (run_id, run_hash, device_id, filename, hz, row_number, r_amplitude, r_width,
                      s_amplitude, s_width, field, source, repeats)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    run_id, run_hash, filepath.name,
+                    run_id, run_hash, 
+                    params.get('device_id'),
+                    filepath.name,
                     params['hz'], params['row'],
                     params['r_amplitude'], params['r_width'],
                     params['s_amplitude'], params['s_width'],
