@@ -4,6 +4,7 @@ import logging
 from tqdm import tqdm
 from pathlib import Path
 import argparse
+import shutil
 
 # Add project root to Python path
 project_root = Path(__file__).parents[1]
@@ -74,11 +75,14 @@ def main(folder_id, file_pattern=r"Hz_.*\.txt$"):
             logger.warning(f"Encountered errors with {error_count} files.")
             
     finally:
-        # Clean up temp directory
+        # Cleanup using rmtree to handle nested directories
         if temp_dir.exists():
-            for file in temp_dir.glob('*'):
-                file.unlink()
-            temp_dir.rmdir()
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info("Successfully cleaned up temporary directory")
+            except Exception as e:
+                logger.warning(f"Could not remove temporary directory structure: {e}")
+                logger.info("You may need to manually delete the temp_downloads directory")
 
 if __name__ == "__main__":
     # Add command line argument parsing

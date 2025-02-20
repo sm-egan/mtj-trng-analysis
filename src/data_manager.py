@@ -39,7 +39,7 @@ class ExperimentalDataManager:
         self.db_path.parent.mkdir(exist_ok=True)
         
         # Set up logging
-        logging.basicConfig(level=logging.DEBUG,
+        logging.basicConfig(level=logging.INFO,
                           format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
@@ -47,40 +47,6 @@ class ExperimentalDataManager:
         
         # Initialize database
         self.initialize_database()
-    
-    # def initialize_database(self):
-    #     """Create the database schema if it doesn't exist."""
-    #     self.logger.info("Initializing database...")
-        
-    #     with sqlite3.connect(self.db_path) as conn:
-    #         # Create runs table with new identifier fields
-    #         conn.execute('''
-    #             CREATE TABLE IF NOT EXISTS runs (
-    #                 run_id TEXT PRIMARY KEY,  -- Changed to TEXT for compound identifier
-    #                 run_hash TEXT UNIQUE,     -- Added for data integrity
-    #                 filename TEXT UNIQUE,
-    #                 hz REAL,
-    #                 row_number INTEGER,
-    #                 r_amplitude REAL,
-    #                 r_width REAL,
-    #                 s_amplitude REAL,
-    #                 s_width REAL,
-    #                 field REAL,
-    #                 source REAL,
-    #                 repeats INTEGER,
-    #                 import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    #             )
-    #         ''')
-            
-    #         conn.execute('''
-    #             CREATE TABLE IF NOT EXISTS measurements (
-    #                 measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    #                 run_id TEXT,              -- Changed to TEXT to match runs table
-    #                 data_point REAL,
-    #                 point_index INTEGER,
-    #                 FOREIGN KEY (run_id) REFERENCES runs(run_id)
-    #             )
-    #         ''')
 
     def initialize_database(self):
         """Create or update the database schema."""
@@ -94,6 +60,9 @@ class ExperimentalDataManager:
             
             if table_exists:
                 # Check if run_hash column exists
+                '''
+                Don't think this block is necessary anymore. Double check and maybe remove
+                '''
                 cursor.execute("PRAGMA table_info(runs)")
                 columns = [info[1] for info in cursor.fetchall()]
                 
@@ -236,63 +205,11 @@ class ExperimentalDataManager:
         return params
 
     def generate_run_id(self, params: Dict, measurements: np.ndarray) -> Tuple[str, str]:
-        """
-        Generate a compound run identifier and hash.
-        
-        Parameters:
-        -----------
-        params : dict
-            Dictionary of experimental parameters
-        measurements : np.ndarray
-            Array of measurement data
-            
-        Returns:
-        --------
-        tuple
-            (run_id, run_hash)
-        """
-        # Create a deterministic but human-readable run ID
-        # run_components = [
-        #     f"D{params.get('device_id')}" if params.get('device_id') else "",
-        #     f"SW{format_scientific(params['s_width'])}",
-        #     f"SA{format_scientific(params['s_amplitude'])}",
-        #     f"F{format_scientific(params['field'])}"
-        #     #datetime.now().strftime("%Y%m%d")
-        # ]
-        # base_run_id = "_".join(run_components)
-        
-        # # Get run identity from validator
-        # run_identity = self.validator.compute_run_identity(params, measurements)
-        # if not run_identity.is_valid:
-        #     raise ValueError(f"Invalid run data: {run_identity.validation_message}")
-        
-        # # Keep trying different hash lengths if we get a collision
-        # hash_length = 6
-        # while True:
-        #     proposed_run_id = f"{base_run_id}_{run_identity.full_hash[:hash_length]}"
-            
-        #     # Check if this ID exists with different data
-        #     with sqlite3.connect(self.db_path) as conn:
-        #         existing = conn.execute(
-        #             "SELECT run_hash FROM runs WHERE run_id = ?", 
-        #             (proposed_run_id,)
-        #         ).fetchone()
-                
-        #         if not existing or existing[0] == run_identity.full_hash:
-        #             # No collision or exact match found
-        #             break
-                    
-        #         hash_length += 1
-        #         if hash_length > 12:  # Safeguard against infinite loop
-        #             raise ValueError("Unable to generate unique run_id")
-        
-        # return proposed_run_id, run_identity.full_hash
-
         run_components = [
             f"D{params.get('device_id')}" if params.get('device_id') else "",
             f"SW{format_scientific(params['s_width'])}",
             f"SA{format_scientific(params['s_amplitude'])}",
-            f"F{format_scientific(params['field'])}"
+            f"F{params['field']:.1f}"
         ]
         base_run_id = "_".join(x for x in run_components if x)
         self.logger.debug(f"Generated base_run_id: {base_run_id}")
