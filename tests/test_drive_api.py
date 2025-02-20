@@ -69,7 +69,6 @@ def list_files_in_folder(service, folder_id):
             fields="files(id, name, mimeType)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
-            # Removing corpora and driveId parameters since this is a shared folder, not a shared drive
         ).execute()
         
         items = results.get('files', [])

@@ -14,9 +14,9 @@ build/
 *.egg-info/
 
 # Credentials and secrets
-credentials.json
-service_account.json
-token.pickle
+config/credentials.json
+config/service_account.json
+config/token.pickle
 
 # IDE specific files
 .vscode/
