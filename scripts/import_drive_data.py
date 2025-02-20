@@ -5,6 +5,7 @@ from tqdm import tqdm
 from pathlib import Path
 import argparse
 import shutil
+import traceback
 
 # Add project root to Python path
 project_root = Path(__file__).parents[1]
@@ -68,6 +69,7 @@ def main(folder_id, file_pattern=r"Hz_.*\.txt$"):
             except Exception as e:
                 error_count += 1
                 logger.error(f"Error processing {file['name']}: {str(e)}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 continue
         
         logger.info(f"Import complete. Successfully imported {imported_count} files.")

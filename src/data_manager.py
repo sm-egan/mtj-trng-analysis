@@ -39,7 +39,7 @@ class ExperimentalDataManager:
         self.db_path.parent.mkdir(exist_ok=True)
         
         # Set up logging
-        logging.basicConfig(level=logging.INFO,
+        logging.basicConfig(level=logging.DEBUG,
                           format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
@@ -272,29 +272,53 @@ class ExperimentalDataManager:
         
         # Read the data points
         #data = np.loadtxt(filepath, delimiter='\t')
+        # try:
+        # # First try reading with numpy
+        #     data = np.loadtxt(filepath, delimiter='\t')
+        # except ValueError as e:
+        #     # If that fails, try pandas which is more forgiving
+        #     try:
+        #         df = pd.read_csv(filepath, delimiter='\t', header=None)
+        #         # Get first row that has the expected number of columns
+        #         max_cols = df.shape[1]
+        #         valid_data = df[df.notna().sum(axis=1) == max_cols]
+        #         if len(valid_data) > 0:
+        #             data = valid_data.iloc[0].values
+        #         else:
+        #             raise ValueError("No valid data rows found")
+        #     except Exception as e2:
+        #         self.logger.error(f"Error reading data from {filepath}: {str(e2)}")
+        #         raise
+        # Read the data points with debug logging
         try:
-        # First try reading with numpy
+            self.logger.debug(f"Attempting numpy.loadtxt for {filepath.name}")
             data = np.loadtxt(filepath, delimiter='\t')
+            self.logger.debug(f"Successfully used numpy.loadtxt. Data type: {data.dtype}, shape: {data.shape}")
         except ValueError as e:
-            # If that fails, try pandas which is more forgiving
+            self.logger.debug(f"numpy.loadtxt failed with error: {str(e)}")
             try:
+                self.logger.debug(f"Attempting pandas read for {filepath.name}")
                 df = pd.read_csv(filepath, delimiter='\t', header=None)
-                # Get first row that has the expected number of columns
                 max_cols = df.shape[1]
                 valid_data = df[df.notna().sum(axis=1) == max_cols]
                 if len(valid_data) > 0:
                     data = valid_data.iloc[0].values
+                    self.logger.debug(f"Successfully used pandas. Data type: {data.dtype}, shape: {data.shape}")
                 else:
                     raise ValueError("No valid data rows found")
             except Exception as e2:
-                self.logger.error(f"Error reading data from {filepath}: {str(e2)}")
+                self.logger.error(f"Both reading methods failed for {filepath.name}")
                 raise
+
+        # Add debug logging before run ID generation
+        self.logger.debug(f"Data sample for {filepath.name}: {data[:5]}")
         
         # Generate run ID and hash
         try:
             run_id, run_hash = self.generate_run_id(params, data)
         except ValueError as e:
-            self.logger.error(f"Error generating run ID: {e}")
+            self.logger.error(f"Run ID generation failed for {filepath.name}")
+            self.logger.error(f"Data type at failure: {type(data)}, dtype: {data.dtype}")
             return None
         
         # Check if run hash already exists
