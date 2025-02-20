@@ -1,12 +1,18 @@
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
+from pathlib import Path
+import sys
+
+# Add project root to Python path
+project_root = Path(__file__).parents[1]  # Go up one level from tests/
+sys.path.insert(0, str(project_root))
 
 def verify_service_account_credentials():
     """Check if we can properly load and read the service account credentials"""
     try:
         print("Step 1: Verifying service account credentials...")
-        with open('service_account.json', 'r') as f:
+        with open('config/service_account.json', 'r') as f:
             creds_data = json.load(f)
         
         print(f"✓ Service account email: {creds_data.get('client_email')}")
@@ -117,7 +123,7 @@ def main():
     
     # [Previous credential and service verification code stays the same]
     credentials = service_account.Credentials.from_service_account_file(
-        'service_account.json', 
+        'config/service_account.json', 
         scopes=['https://www.googleapis.com/auth/drive.readonly']
     )
     service = build('drive', 'v3', credentials=credentials)

@@ -17,7 +17,7 @@ def format_scientific(value):
         return f"{value:.3f}"
 
 class ExperimentalDataManager:
-    def __init__(self, db_path='database/experiment_data.db', data_dir='sample_data'):
+    def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data'):
         """
         Initialize the data manager with a SQLite database connection.
         
@@ -122,8 +122,8 @@ class ExperimentalDataManager:
                 CREATE TABLE IF NOT EXISTS measurements (
                     measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT,
-                    data_point REAL,
-                    point_index INTEGER,
+                    device_voltage REAL,
+                    measurement_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
                 )
             ''')
@@ -280,7 +280,7 @@ class ExperimentalDataManager:
         params = self.parse_filename(filepath.name)
         
         # Read the data points
-        data = pd.read_csv(filepath, header=None, sep='\t').iloc[0].values
+        data = np.loadtxt(filepath, delimiter='\t')
         
         # Generate run ID and hash
         try:
@@ -300,32 +300,49 @@ class ExperimentalDataManager:
                 self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
                 return existing[0]
         
-        # Insert new run
+        # Insert new run with optimized database operations
         with sqlite3.connect(self.db_path) as conn:
+            # Enable faster inserts
+            conn.execute('PRAGMA synchronous = OFF')
+            conn.execute('PRAGMA journal_mode = WAL')
+            
             cursor = conn.cursor()
             
-            # Insert run metadata
-            cursor.execute('''
-                INSERT INTO runs 
-                (run_id, run_hash, filename, hz, row_number, r_amplitude, r_width,
-                 s_amplitude, s_width, field, source, repeats)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                run_id, run_hash, filepath.name,
-                params['hz'], params['row'],
-                params['r_amplitude'], params['r_width'],
-                params['s_amplitude'], params['s_width'],
-                params['field'], params['source'], params['repeats']
-            ))
-            
-            # Insert measurements
-            measurements = [(run_id, float(value), idx) 
-                           for idx, value in enumerate(data)]
-            
-            conn.executemany('''
-                INSERT INTO measurements (run_id, data_point, point_index)
-                VALUES (?, ?, ?)
-            ''', measurements)
+            # Begin transaction explicitly
+            cursor.execute('BEGIN TRANSACTION')
+            try:
+                # Insert run metadata
+                cursor.execute('''
+                    INSERT INTO runs 
+                    (run_id, run_hash, filename, hz, row_number, r_amplitude, r_width,
+                     s_amplitude, s_width, field, source, repeats)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    run_id, run_hash, filepath.name,
+                    params['hz'], params['row'],
+                    params['r_amplitude'], params['r_width'],
+                    params['s_amplitude'], params['s_width'],
+                    params['field'], params['source'], params['repeats']
+                ))
+                
+                # Insert measurements in chunks
+                CHUNK_SIZE = 100000  # Process 100k rows at a time
+                for i in range(0, len(data), CHUNK_SIZE):
+                    chunk = data[i:i + CHUNK_SIZE]
+                    measurements = [(run_id, float(value), idx + i) 
+                                  for idx, value in enumerate(chunk)]
+                    
+                    cursor.executemany('''
+                        INSERT INTO measurements (run_id, device_voltage, measurement_index)
+                        VALUES (?, ?, ?)
+                    ''', measurements)
+                
+                # Commit the transaction
+                conn.commit()
+                
+            except Exception as e:
+                conn.rollback()
+                raise e
         
         self.logger.info(f"Successfully imported run {run_id}")
         return run_id
@@ -382,10 +399,10 @@ class ExperimentalDataManager:
                 
             # Then get the measurements
             measurements_query = """
-            SELECT point_index, data_point
+            SELECT measurement_index, device_voltage
             FROM measurements 
             WHERE run_id = ?
-            ORDER BY point_index
+            ORDER BY measurement_index
             """
             measurements_df = pd.read_sql_query(measurements_query, conn, params=[run_id])
             
@@ -393,8 +410,8 @@ class ExperimentalDataManager:
             if not measurements_df.empty:
                 # Create measurement columns with prefix 'point_'
                 measurements_wide = pd.DataFrame(
-                    [measurements_df['data_point'].values],
-                    columns=[f'point_{i}' for i in measurements_df['point_index']]
+                    [measurements_df['device_voltage'].values],
+                    columns=[f'measurement_{i}' for i in measurements_df['measurement_index']]
                 )
                 
                 # Combine run metadata with measurements
@@ -463,6 +480,9 @@ if __name__ == "__main__":
     # Initialize data manager
     dm = ExperimentalDataManager()
     
+    #temporary code to remove file for re-import
+    dm.delete_run('SW4.24e-9_SA4.220_F-375.000_c56d69')
+
     # Import all files from sample_data directory
     dm.import_directory()
     
@@ -482,10 +502,10 @@ if __name__ == "__main__":
         if run_data is not None:
             print("\nFirst run metadata:")
             # Display metadata columns
-            metadata_cols = [col for col in run_data.columns if not col.startswith('point_')]
+            metadata_cols = [col for col in run_data.columns if not col.startswith('measurement_')]
             print(run_data[metadata_cols].to_string())
             
             print("\nMeasurement summary:")
-            measurement_cols = [col for col in run_data.columns if col.startswith('point_')]
+            measurement_cols = [col for col in run_data.columns if col.startswith('measurement_')]
             measurements = run_data[measurement_cols].iloc[0]
             print(f"Number of measurements: {len(measurements)}")
