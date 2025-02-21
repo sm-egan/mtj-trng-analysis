@@ -94,10 +94,11 @@ class ExperimentalDataManager:
             # Always ensure measurements table exists
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
-                    measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT,
                     device_voltage REAL,
-                    measurement_index INTEGER,
+                    #measurement_index INTEGER,
+                    row_index INTEGER,
+                    col_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
                 )
             ''')
@@ -312,7 +313,6 @@ class ExperimentalDataManager:
 
         # Add debug logging before run ID generation
         self.logger.debug(f"Data sample for {filepath.name}: {data[:5]}")
-        self.logger.debug(f"Shape of data for {filepath.name}: {data.shape}")
         
         # Generate run ID and hash
         try:

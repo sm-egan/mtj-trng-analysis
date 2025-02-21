@@ -6,6 +6,7 @@ from pathlib import Path
 import argparse
 import shutil
 import traceback
+import json
 
 # Add project root to Python path
 project_root = Path(__file__).parents[1]
