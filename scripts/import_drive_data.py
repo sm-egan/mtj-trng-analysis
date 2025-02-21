@@ -27,7 +27,7 @@ def load_config():
     with open(config_path) as f:
         return json.load(f)
 
-def import_drive_data(folder_id, file_pattern=r"Hz_.*\.txt$"):
+def import_drive_data(folder_id, file_pattern=r"Hz_.*\.txt$", logging_level='INFO'):
     """Import experimental data from Google Drive to local database"""
     # Load config
     config = load_config()
@@ -45,10 +45,14 @@ def import_drive_data(folder_id, file_pattern=r"Hz_.*\.txt$"):
     temp_dir = project_root / 'temp_downloads'
     
     drive_manager = GoogleDriveManager(credentials_path)
-    data_manager = ExperimentalDataManager(db_path=db_path)
+    data_manager = ExperimentalDataManager(db_path=db_path, logging_level=logging_level)
     
     # Set up logging
-    logging.basicConfig(level=logging.INFO,
+    if logging_level == "INFO":
+        level = logging.INFO
+    elif logging_level == "DEBUG":
+        level = logging.DEBUG
+    logging.basicConfig(level=level,
                        format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     
@@ -113,6 +117,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Import experimental data from Google Drive')
     parser.add_argument('--folder_id', help='Google Drive folder ID to import from (overrides config default)')
     parser.add_argument('--pattern', default=r"Hz_.*\.txt$", help='Regex pattern to match filenames')
+    parser.add_argument('--logging_level', default="INFO", help='Regex pattern to match filenames')
     
     args = parser.parse_args()
     

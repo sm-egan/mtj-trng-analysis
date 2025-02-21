@@ -21,7 +21,7 @@ def format_scientific(value):
         return str(value)
 
 class ExperimentalDataManager:
-    def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data'):
+    def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data', logging_level = 'INFO'):
         """
         Initialize the data manager with a SQLite database connection.
         
@@ -39,7 +39,11 @@ class ExperimentalDataManager:
         self.db_path.parent.mkdir(exist_ok=True)
         
         # Set up logging
-        logging.basicConfig(level=logging.DEBUG,
+        if logging_level == "INFO":
+            level = logging.INFO
+        elif logging_level == "DEBUG":
+            level = logging.DEBUG
+        logging.basicConfig(level=level,
                           format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
@@ -76,10 +80,8 @@ class ExperimentalDataManager:
             # Always ensure measurements table exists
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
-                    #measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT,
                     device_voltage REAL,
-                    #measurement_index INTEGER,
                     row_index INTEGER,
                     col_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
@@ -351,7 +353,7 @@ class ExperimentalDataManager:
                                       for idx, value in enumerate(chunk)]
                         
                         cursor.executemany('''
-                            INSERT INTO measurements (run_id, device_voltage, row_idx, col_idx)
+                            INSERT INTO measurements (run_id, device_voltage, row_index, col_index)
                             VALUES (?, ?, ?, ?)
                         ''', measurements)
                         
@@ -364,7 +366,7 @@ class ExperimentalDataManager:
                                           for col_idx, value in enumerate(chunk)]
                             
                             cursor.executemany('''
-                                INSERT INTO measurements (run_id, device_voltage, row_idx, col_idx)
+                                INSERT INTO measurements (run_id, device_voltage, row_index, col_index)
                                 VALUES (?, ?, ?, ?)
                             ''', measurements)
                 
