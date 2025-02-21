@@ -1,0 +1,9 @@
+{
+    "drive": {
+        "default_folder_id": "",
+        "credentials_path": "config/service_account.json"
+    },
+    "database": {
+        "path": "database/mtj_switching_data.db"
+    }
+}

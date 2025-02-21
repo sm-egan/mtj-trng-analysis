@@ -17,6 +17,7 @@ build/
 config/credentials.json
 config/service_account.json
 config/token.pickle
+config/config.json
 
 # IDE specific files
 .vscode/

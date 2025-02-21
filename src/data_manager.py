@@ -312,6 +312,7 @@ class ExperimentalDataManager:
 
         # Add debug logging before run ID generation
         self.logger.debug(f"Data sample for {filepath.name}: {data[:5]}")
+        self.logger.debug(f"Shape of data for {filepath.name}: {data.shape}")
         
         # Generate run ID and hash
         try:
@@ -513,9 +514,6 @@ class ExperimentalDataManager:
 if __name__ == "__main__":
     # Initialize data manager
     dm = ExperimentalDataManager()
-    
-    #temporary code to remove file for re-import
-    dm.delete_run('SW4.24e-9_SA4.220_F-375.000_c56d69')
 
     # Import all files from sample_data directory
     dm.import_directory()
