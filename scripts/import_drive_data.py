@@ -121,4 +121,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    import_drive_data(args.folder_id, args.pattern)
+    import_drive_data(args.folder_id, args.pattern, args.logging_level)
