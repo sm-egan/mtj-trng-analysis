@@ -53,47 +53,30 @@ class ExperimentalDataManager:
         self.logger.info("Initializing database...")
         
         with sqlite3.connect(self.db_path) as conn:
-            # First, check if the runs table exists and its current structure
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='runs'")
-            table_exists = cursor.fetchone() is not None
-            
-            if table_exists:
-                # Check if run_hash column exists
-                '''
-                Don't think this block is necessary anymore. Double check and maybe remove
-                '''
-                cursor.execute("PRAGMA table_info(runs)")
-                columns = [info[1] for info in cursor.fetchall()]
-                
-                if 'run_hash' not in columns:
-                    self.logger.info("Updating database schema to include run_hash...")
-                    # Add the run_hash column
-                    conn.execute("ALTER TABLE runs ADD COLUMN run_hash TEXT UNIQUE")
-            else:
-                # Create new table with current schema
-                conn.execute('''
-                    CREATE TABLE runs (
-                        run_id TEXT PRIMARY KEY,
-                        run_hash TEXT UNIQUE,
-                        device_id TEXT,
-                        filename TEXT UNIQUE,
-                        hz REAL,
-                        row_number INTEGER,
-                        r_amplitude REAL,
-                        r_width REAL,
-                        s_amplitude REAL,
-                        s_width REAL,
-                        field REAL,
-                        source REAL,
-                        repeats INTEGER,
-                        import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
+            # Create runs table with current schema
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    run_hash TEXT UNIQUE,
+                    device_id TEXT,
+                    filename TEXT UNIQUE,
+                    hz REAL,
+                    row_number INTEGER,
+                    r_amplitude REAL,
+                    r_width REAL,
+                    s_amplitude REAL,
+                    s_width REAL,
+                    field REAL,
+                    source REAL,
+                    repeats INTEGER,
+                    import_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
                 
             # Always ensure measurements table exists
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
+                    #measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT,
                     device_voltage REAL,
                     #measurement_index INTEGER,
@@ -335,13 +318,10 @@ class ExperimentalDataManager:
         
         # Insert new run with optimized database operations
         with sqlite3.connect(self.db_path) as conn:
-            # Enable faster inserts
             conn.execute('PRAGMA synchronous = OFF')
             conn.execute('PRAGMA journal_mode = WAL')
             
             cursor = conn.cursor()
-            
-            # Begin transaction explicitly
             cursor.execute('BEGIN TRANSACTION')
             try:
                 # Insert run metadata
@@ -361,18 +341,33 @@ class ExperimentalDataManager:
                 ))
                 
                 # Insert measurements in chunks
-                CHUNK_SIZE = 100000  # Process 100k rows at a time
-                for i in range(0, len(data), CHUNK_SIZE):
-                    chunk = data[i:i + CHUNK_SIZE]
-                    measurements = [(run_id, float(value), idx + i) 
-                                  for idx, value in enumerate(chunk)]
-                    
-                    cursor.executemany('''
-                        INSERT INTO measurements (run_id, device_voltage, measurement_index)
-                        VALUES (?, ?, ?)
-                    ''', measurements)
+                CHUNK_SIZE = 100000
                 
-                # Commit the transaction
+                try:
+                    # Try the 1D case first - this will raise an exception if data is 2D
+                    for i in range(0, len(data), CHUNK_SIZE):
+                        chunk = data[i:i + CHUNK_SIZE]
+                        measurements = [(run_id, float(value), 0, idx + i) 
+                                      for idx, value in enumerate(chunk)]
+                        
+                        cursor.executemany('''
+                            INSERT INTO measurements (run_id, device_voltage, row_idx, col_idx)
+                            VALUES (?, ?, ?, ?)
+                        ''', measurements)
+                        
+                except TypeError:  # Will be raised when trying to float() a row instead of a value
+                    # Handle 2D data case
+                    for row_idx, row in enumerate(data):
+                        for i in range(0, len(row), CHUNK_SIZE):
+                            chunk = row[i:i + CHUNK_SIZE]
+                            measurements = [(run_id, float(value), row_idx, col_idx + i)
+                                          for col_idx, value in enumerate(chunk)]
+                            
+                            cursor.executemany('''
+                                INSERT INTO measurements (run_id, device_voltage, row_idx, col_idx)
+                                VALUES (?, ?, ?, ?)
+                            ''', measurements)
+                
                 conn.commit()
                 
             except Exception as e:
