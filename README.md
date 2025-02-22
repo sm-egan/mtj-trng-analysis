@@ -93,4 +93,4 @@ Common issues:
 
 ## Questions?
 
-Contact [your-email] for assistance or access requests.
+Contact Shannon for assistance or access requests.
