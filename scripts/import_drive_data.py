@@ -61,8 +61,7 @@ def import_drive_data(folder_id, file_pattern=r"Hz_.*\.txt$", logging_level='INF
     data_manager = ExperimentalDataManager()
     
     try:
-        # List all files in folder
-        #logger.info(f"Listing files in folder {folder_id}")
+
         
         # Recursively list all matching files
         logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
