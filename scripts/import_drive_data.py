@@ -27,7 +27,7 @@ def load_config():
     with open(config_path) as f:
         return json.load(f)
 
-def import_drive_data(folder_id, file_pattern=r"Hz_.*\.txt$", logging_level='INFO'):
+def import_drive_data(folder_id, file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", logging_level='INFO'):
     """Import experimental data from Google Drive to local database"""
     # Load config
     config = load_config()
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Import experimental data from Google Drive')
     parser.add_argument('--folder_id', help='Google Drive folder ID to import from (overrides config default)')
-    parser.add_argument('--pattern', default=r"Hz_.*\.txt$", help='Regex pattern to match filenames')
+    parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", help='Regex pattern to match filenames')
     parser.add_argument('--logging_level', default="INFO", help='Regex pattern to match filenames')
     
     args = parser.parse_args()

@@ -31,3 +31,6 @@ Thumbs.db
 sample_data/
 database/
 temp_downloads/
+
+#Plots
+misc_plots/
