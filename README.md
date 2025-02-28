@@ -86,7 +86,7 @@ Optional: Specify a different folder ID:
 python scripts/import_drive_data.py --folder_id "your_alternative_folder_id"
 ```
 
-### 4. Opening jupyter notebook for analysis
+### 4. Opening Jupyter Notebook for Data Analysis
 ```bash
 #Register the kernel for Jupyter:
 python -m ipykernel install --user --name=venv
