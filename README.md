@@ -28,6 +28,12 @@ source venv/bin/activate
 
 # Install requirements
 pip install -r requirements.txt
+
+#Register the kernel for Jupyter:
+python -m ipykernel install --user --name=venv
+
+#Start Jupyter notebook:
+jupyter notebooks/test_histogram_switching_prob.ipynb
 ```
 
 ### 2. Google Drive Setup
