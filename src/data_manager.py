@@ -107,18 +107,6 @@ class ExperimentalDataManager:
         name_to_parse = filepath.stem
         
         self.logger.debug(f"Parsing parameters from: {name_to_parse}")
-        
-        patterns = {
-            'hz': r'Hz_(\d+)',
-            'row': r'Row\s*(\d+)',
-            'r_amplitude': r'RAmp-([\d.E+-]+)',
-            'r_width': r'RWid([\d.E+-]+)',
-            's_amplitude': r'SAmp([\d.E+-]+)',
-            's_width': r'SWid([\d.E+-]+)',
-            'field': r'Field([\d.E+-]+)',
-            'source': r'Source([\d.E+-]+)',
-            'repeats': r'Repeats([\d.E+-]+)'
-        }
 
         patterns = {
             'hz': r'Hz_(\d+)',
@@ -256,26 +244,6 @@ class ExperimentalDataManager:
         if device_id:
             params['device_id'] = device_id
         
-        # Read the data points
-        #data = np.loadtxt(filepath, delimiter='\t')
-        # try:
-        # # First try reading with numpy
-        #     data = np.loadtxt(filepath, delimiter='\t')
-        # except ValueError as e:
-        #     # If that fails, try pandas which is more forgiving
-        #     try:
-        #         df = pd.read_csv(filepath, delimiter='\t', header=None)
-        #         # Get first row that has the expected number of columns
-        #         max_cols = df.shape[1]
-        #         valid_data = df[df.notna().sum(axis=1) == max_cols]
-        #         if len(valid_data) > 0:
-        #             data = valid_data.iloc[0].values
-        #         else:
-        #             raise ValueError("No valid data rows found")
-        #     except Exception as e2:
-        #         self.logger.error(f"Error reading data from {filepath}: {str(e2)}")
-        #         raise
-        # Read the data points with debug logging
         try:
             self.logger.debug(f"Attempting numpy.loadtxt for {filepath.name}")
             data = np.loadtxt(filepath, delimiter='\t')
@@ -314,7 +282,7 @@ class ExperimentalDataManager:
                 (run_hash,)
             ).fetchone()
             
-            if existing:
+            if existing: # TO DO: Check duplicate based on measurement hash (instead of measurement + file path)
                 self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
                 return existing[0]
         
