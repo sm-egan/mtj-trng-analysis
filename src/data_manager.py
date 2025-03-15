@@ -21,7 +21,7 @@ def format_scientific(value):
         return str(value)
 
 class ExperimentalDataManager:
-    def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data', logging_level = 'INFO'):
+    def __init__(self, db_path='database/mtj_switching_data_int.db', data_dir='sample_data', logging_level = 'INFO'):
         """
         Initialize the data manager with a SQLite database connection.
         
@@ -48,6 +48,9 @@ class ExperimentalDataManager:
         self.logger = logging.getLogger(__name__)
 
         self.validator = DataValidator()
+
+        # Define scaling factor for integer storage (10^6 for 6 decimal places)
+        self.VOLTAGE_SCALING_FACTOR = 1_000_000
         
         # Initialize database
         self.initialize_database()
@@ -81,7 +84,7 @@ class ExperimentalDataManager:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
                     run_id TEXT,
-                    device_voltage REAL,
+                    device_voltage INTEGER,
                     row_index INTEGER,
                     col_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
@@ -317,7 +320,7 @@ class ExperimentalDataManager:
                     # Try the 1D case first - this will raise an exception if data is 2D
                     for i in range(0, len(data), CHUNK_SIZE):
                         chunk = data[i:i + CHUNK_SIZE]
-                        measurements = [(run_id, float(value), 0, idx + i) 
+                        measurements = [(run_id, int(float(value) * self.VOLTAGE_SCALING_FACTOR), 0, idx + i) 
                                       for idx, value in enumerate(chunk)]
                         
                         cursor.executemany('''
@@ -330,7 +333,7 @@ class ExperimentalDataManager:
                     for row_idx, row in enumerate(data):
                         for i in range(0, len(row), CHUNK_SIZE):
                             chunk = row[i:i + CHUNK_SIZE]
-                            measurements = [(run_id, float(value), row_idx, col_idx + i)
+                            measurements = [(run_id, int(float(value) * self.VOLTAGE_SCALING_FACTOR), row_idx, col_idx + i)
                                           for col_idx, value in enumerate(chunk)]
                             
                             cursor.executemany('''
@@ -383,9 +386,16 @@ class ExperimentalDataManager:
         with sqlite3.connect(self.db_path) as conn:
             if run_id is not None:
                 query = "SELECT * FROM measurements WHERE run_id = ?"
-                return pd.read_sql_query(query, conn, params=[run_id])
+                df = pd.read_sql_query(query, conn, params=[run_id])
             else:
-                return pd.read_sql_query("SELECT * FROM measurements", conn)
+                df = pd.read_sql_query("SELECT * FROM measurements", conn)
+
+            # Convert scaled integers back to floating point
+            if not df.empty:
+                df['device_voltage'] = df['device_voltage'] / self.VOLTAGE_SCALING_FACTOR
+
+            return df
+            
     
     def get_run_with_measurements(self, run_id):
         """Get a single run with all its measurements as a wide-format DataFrame"""
