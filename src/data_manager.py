@@ -21,7 +21,7 @@ def format_scientific(value):
         return str(value)
 
 class ExperimentalDataManager:
-    def __init__(self, db_path='database/mtj_switching_data_int.db', data_dir='sample_data', logging_level = 'INFO'):
+    def __init__(self, db_path='database/mtj_switching_data.db', data_dir='sample_data', logging_level = 'INFO'):
         """
         Initialize the data manager with a SQLite database connection.
         
@@ -84,7 +84,7 @@ class ExperimentalDataManager:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS measurements (
                     run_id TEXT,
-                    device_voltage INTEGER,
+                    device_voltage REAL,
                     row_index INTEGER,
                     col_index INTEGER,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
@@ -320,7 +320,7 @@ class ExperimentalDataManager:
                     # Try the 1D case first - this will raise an exception if data is 2D
                     for i in range(0, len(data), CHUNK_SIZE):
                         chunk = data[i:i + CHUNK_SIZE]
-                        measurements = [(run_id, int(float(value) * self.VOLTAGE_SCALING_FACTOR), 0, idx + i) 
+                        measurements = [(run_id, float(value), 0, idx + i) 
                                       for idx, value in enumerate(chunk)]
                         
                         cursor.executemany('''
@@ -333,7 +333,7 @@ class ExperimentalDataManager:
                     for row_idx, row in enumerate(data):
                         for i in range(0, len(row), CHUNK_SIZE):
                             chunk = row[i:i + CHUNK_SIZE]
-                            measurements = [(run_id, int(float(value) * self.VOLTAGE_SCALING_FACTOR), row_idx, col_idx + i)
+                            measurements = [(run_id, float(value), row_idx, col_idx + i)
                                           for col_idx, value in enumerate(chunk)]
                             
                             cursor.executemany('''
@@ -467,25 +467,7 @@ class ExperimentalDataManager:
             self.logger.info(f"Successfully deleted run {run_id} and its measurements")
             return True
 
-# Example usage
-# if __name__ == "__main__":
-#     # Initialize data manager
-#     dm = ExperimentalDataManager()
-    
-#     # Import all files from sample_data directory
-#     dm.import_directory()
-    
-#     # Get all runs
-#     runs = dm.get_runs()
-#     print("\nAvailable runs:")
-#     print(runs)
-    
-#     if not runs.empty:
-#         # Get first run with measurements
-#         first_run_id = runs['run_id'].iloc[0]
-#         run_data = dm.get_run_with_measurements(first_run_id)
-#         print("\nFirst run data:")
-#         print(run_data)
+
 if __name__ == "__main__":
     # Initialize data manager
     dm = ExperimentalDataManager()
