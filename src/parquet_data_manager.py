@@ -17,7 +17,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
     instead of the SQLite database. Uses a columnar approach where each run's
     measurements are stored as a separate column in the Parquet file.
     """
-    def __init__(self, db_path='database/mtj_switching_data.db', 
+    def __init__(self, db_path='database/mtj_switching_data_parquet.db', 
                  parquet_dir='database/parquet_data', 
                  data_dir='sample_data', logging_level='INFO'):
         """
@@ -151,6 +151,8 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         # If data is 2D, flatten it
         if len(data.shape) > 1:
             data = data.flatten()
+
+        data = data.astype(np.float32)
             
         # Generate a clean column name from run_id that's safe for parquet
         column_name = f"run_{re.sub(r'[^\w]', '_', run_id)}"

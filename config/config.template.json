@@ -4,6 +4,6 @@
         "credentials_path": "config/service_account.json"
     },
     "database": {
-        "path": "database/mtj_switching_data.db"
+        "path": "database/mtj_switching_data_parquet.db"
     }
 }
