@@ -7,6 +7,7 @@ import argparse
 import shutil
 import traceback
 import json
+import random
 
 # Add project root to Python path
 project_root = Path(__file__).parents[1]
@@ -28,7 +29,11 @@ def load_config():
     with open(config_path) as f:
         return json.load(f)
 
-def import_drive_data(folder_id, file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", logging_level='INFO'):
+def import_drive_data(folder_id, 
+                        file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", 
+                        logging_level='INFO',
+                        n_files=None,
+                        shuffle_files=False):
     """Import experimental data from Google Drive to local database"""
     # Load config
     config = load_config()
@@ -72,6 +77,15 @@ def import_drive_data(folder_id, file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.
         logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
         files = drive_manager.list_files_recursively(folder_id, file_pattern)
         logger.info(f"Found {len(files)} matching files")
+
+        if n_files:
+            if shuffle_files:
+                files = random.sample(files, n_files)
+                logger.info(f"Randomly selected {n_files} file for import")
+            else:
+                files = files[0:n_files]
+                logger.info(f"Selected the first {n_files} files for import")
+            
         
         # Create temporary directory for downloads
         temp_dir = Path(temp_dir)
@@ -122,7 +136,9 @@ if __name__ == "__main__":
     parser.add_argument('--folder_id', help='Google Drive folder ID to import from (overrides config default)')
     parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", help='Regex pattern to match filenames')
     parser.add_argument('--logging_level', default="INFO", help='Logging level (INFO, DEBUG)')
+    parser.add_argument('--n_files', default=None, help='Number of files to import, if less that full list')
+    parser.add_argument('--shuffle_files', default=False, help='Option to shuffle files in list before download. Only used when n_files is also specified.')
     
     args = parser.parse_args()
     
-    import_drive_data(args.folder_id, args.pattern, args.logging_level)
+    import_drive_data(args.folder_id, args.pattern, args.logging_level, int(args.n_files) if args.n_files is not None else args.n_files, bool(args.shuffle_files))
