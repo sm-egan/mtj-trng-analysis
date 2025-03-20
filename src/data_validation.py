@@ -28,6 +28,14 @@ class DataValidator:
         self.filename_pattern = filename_pattern
         self.logger = logging.getLogger(__name__)
     
+    def compute_measurement_hash(self,
+                                filepath,
+                                ) -> str:
+        """
+        Function to implement new measurement hash approach
+        
+        """
+    
 
     def compute_run_identity(self, 
                             metadata: Dict, 
@@ -51,8 +59,7 @@ class DataValidator:
         if measurements.ndim > 1:
             measurements = measurements.flatten()
 
-        # Check for NaN or infinite values in first n_points
-        check_measurements = measurements[:n_points]
+        check_measurements = measurements
         #Return invalid hash if any of the values are NaN or inf
         if not np.all(np.isfinite(check_measurements)):
             return RunIdentity(
@@ -64,7 +71,9 @@ class DataValidator:
         
         # Create deterministic string representation of data
         metadata_str = '_'.join(f"{k}:{v}" for k, v in sorted(metadata.items()))
-        measurements_str = '_'.join(f"{x:.6f}" for x in check_measurements)
+        # Only include first n_points for hash stability. Ran into issues with larger files
+        measurements_str = '_'.join(f"{x:.6f}" for x in check_measurements[:n_points])
+        self.logger.debug(f"Preview of measurements_str used in hash (first 100 characters): {measurements_str[:100]}")
         content_to_hash = f"{metadata_str}|{measurements_str}"
         
         # Compute full hash
