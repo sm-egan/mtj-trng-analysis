@@ -245,11 +245,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         polars.DataFrame
             DataFrame containing measurements
         """
-        empty_df = pl.DataFrame(schema={
-                'run_id': pl.Utf8,
-                'device_voltage': pl.Float32,
-                'index': pl.Int32
-            })
+        empty_df = pl.DataFrame()
 
         # Handle case where run_id is None
         if run_id is None:
@@ -372,73 +368,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         
         return empty_df
         
-    
-    # def _read_multiple_runs_from_parquet(self, parquet_info):
-    #     """
-    #     Read measurements for multiple runs, optimized to read columns from the
-    #     same Parquet file in a single operation.
-        
-    #     Parameters:
-    #     -----------
-    #     parquet_info : dict
-    #         Dictionary mapping Parquet file paths to lists of (run_id, column_name) tuples
-            
-    #     Returns:
-    #     --------
-    #     polars.DataFrame
-    #         DataFrame with all measurements
-    #     """
-    #     # Initialize empty DataFrame with the right schema
-    #     result_df = pl.DataFrame(schema={
-    #         'run_id': pl.Utf8,
-    #         'device_voltage': pl.Float32,
-    #         'index': pl.UInt32
-    #     })
 
-    #     if not parquet_info:
-    #         result_df
-
-    #     # Loop over each each Parquet file and the list of (run_id, column) tuples for each one
-    #     for parquet_path, run_info in parquet_info.items():
-    #         try:
-    #             # Get all column names to read from this file
-    #             run_ids = [info[0] for info in run_info]
-    #             columns = [info[1] for info in run_info]
-                
-    #             self.logger.debug(f"Reading {len(columns)} columns from {parquet_path}")
-                
-    #             # Read all columns at once for this file
-    #             table = pq.read_table(parquet_path, columns=columns)
-    #             #df = table.to_pandas()
-                
-    #             # Process each column and concat with results
-    #             # for run_id, column in run_info:
-    #             #     if column in df.columns:
-    #             #         # Extract data and drop NaNs
-    #             #         voltage_array = df[column].dropna().values
-                        
-    #             #         if len(voltage_array) > 0:
-    #             #             try:
-    #             #                 # Create a DataFrame for this run
-    #             #                 run_df = pl.DataFrame({
-    #             #                     'run_id': [run_id] * len(voltage_array),
-    #             #                     'device_voltage': voltage_array,
-    #             #                     'index': np.arange(len(voltage_array)).astype(np.uint32)
-    #             #                 })
-                                
-    #             #                 # Append to results
-    #             #                 result_df = pl.concat([result_df, run_df])
-    #             #             except Exception as e:
-    #             #                 self.logger.error(f"Error creating polars DataFrame: {str(e)}")
-    #             #     else:
-    #             #         self.logger.warning(f"Column {column} not found in {parquet_path}")
-                
-    #         except Exception as e:
-    #             self.logger.error(f"Error reading from Parquet file {parquet_path}: {str(e)}")
-        
-    #     #return result_df
-    #     return pl.from_arrow(table)
-    
     def get_runs_by_criteria(self, criteria):
         """
         Get run IDs that match specific criteria.
