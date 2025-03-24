@@ -340,11 +340,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             DataFrame with all measurements
         """
         # Initialize empty DataFrame with the right schema
-        empty_df = pl.DataFrame(schema={
-            'run_id': pl.Utf8,
-            'device_voltage': pl.Float32,
-            'index': pl.UInt32
-        })
+        empty_df = pl.DataFrame()
 
         if not parquet_info:
             result_df
@@ -367,9 +363,98 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 self.logger.error(f"Error reading from Parquet file {parquet_path}: {str(e)}")
         
         return empty_df
-        
 
-    def get_runs_by_criteria(self, criteria):
+    # def stack_measurements(self, measurements_df):
+    #     """
+    #     Parameters:
+    #     -----------
+    #     measurements_df : polars.DataFrame
+    #         Dataframe in the format output by get_measurements where each column label is a run ID, rows are device voltages
+
+
+    #     Returns:
+    #     --------
+    #     polars.DataFrame
+    #         DataFrame with vertically stacked measurements and run_id info in each row
+    #     """
+    #     stacked_df = pl.DataFrame(schema={
+    #             'run_id': pl.Utf8,
+    #             'row_index': pl.UInt32,
+    #             'device_voltage': pl.Float32
+    #         })
+
+    #     for run_id in measurements_df.columns:
+    #         try:
+    #             voltage_column = measurements_df[run_id].drop_nulls()
+    #             self.logger.debug(f"Shape of column {voltage_column.shape}. Sample of voltage column to stack: {str(voltage_column.head(10))}")
+
+    #             voltage_column = voltage_column.rename("device_voltage")
+
+    #             run_df = pl.DataFrame({
+    #                 'run_id': [run_id]*len(voltage_column),
+    #                 'row_index': np.arange(len(voltage_column)).astype(np.uint32)
+    #                 'device_voltage': voltage_column
+    #                 })
+
+    #             stacked_df = pl.concat([stacked_df, run_df])
+
+    #         except Exception as e:
+    #             self.logger.error(f"Error stacking column {run_id} from measurements DataFrame", exc_info=True)
+    
+    #     return stacked_df
+
+    def stack_measurements(self, measurements_df):
+        """
+        Parameters:
+        -----------
+        measurements_df : polars.DataFrame
+            Dataframe in the format output by get_measurements where each column label is a run ID, rows are device voltages
+        Returns:
+        --------
+        polars.DataFrame
+            DataFrame with vertically stacked measurements and run_id info in each row
+        """
+        # List to collect individual DataFrames before final concatenation
+        dfs_to_stack = []
+        
+        # Create empty result DataFrame for cases where no data is processed
+        empty_df = pl.DataFrame(schema={
+                'run_id': pl.Utf8,
+                'row_index': pl.UInt32,
+                'device_voltage': pl.Float32
+        })
+        
+        for run_id in measurements_df.columns:
+            try:
+                # Get the column and drop nulls
+                col = measurements_df[run_id].drop_nulls()
+                
+                if len(col) == 0:
+                    continue
+                
+                # Create row indices using a simple range
+                row_indices = pl.Series("row_index", range(len(col)), dtype=pl.UInt32)
+                
+                # Create a DataFrame for this run
+                run_df = pl.DataFrame({
+                    "run_id": pl.Series([run_id] * len(col), dtype=pl.Utf8),
+                    "row_index": row_indices,
+                    "device_voltage": col.cast(pl.Float32)
+                })
+                
+                # Add to our collection
+                dfs_to_stack.append(run_df)
+                
+            except Exception as e:
+                self.logger.error(f"Error stacking column {run_id} from measurements DataFrame: {str(e)}", exc_info=True)
+        
+        # Concatenate all the DataFrames if we have any
+        if dfs_to_stack:
+            return pl.concat(dfs_to_stack)
+        else:
+            return empty_df
+
+    def get_runs_by_criteria(self, criteria) -> list:
         """
         Get run IDs that match specific criteria.
         

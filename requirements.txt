@@ -3,6 +3,7 @@ numpy>=1.24.0
 polars>=0.20.0
 pandas>=2.0.0
 pyarrow>=10.0.0  # For Parquet support
+scikit-learn>=1.2.0  # For clustering algorithms
 
 # Visualization
 matplotlib>=3.7.0
