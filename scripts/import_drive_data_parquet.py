@@ -81,7 +81,7 @@ def import_drive_data(folder_id,
         if n_files:
             if shuffle_files:
                 files = random.sample(files, n_files)
-                logger.info(f"Randomly selected {n_files} file for import")
+                logger.info(f"Randomly sampled {n_files} files for import")
             else:
                 files = files[0:n_files]
                 logger.info(f"Selected the first {n_files} files for import")

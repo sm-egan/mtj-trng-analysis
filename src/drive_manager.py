@@ -46,7 +46,7 @@ class GoogleDriveManager:
             self.logger.error(f"Error listing folder contents: {str(e)}")
             raise
 
-    def list_files_recursively(self, folder_id, file_pattern=r"Hz_.*\.txt$"):
+    def list_files_recursively(self, folder_id, file_pattern=r"Hz_.*\.txt$") -> list:
         """
         Recursively list all matching files in a folder and its subfolders
         

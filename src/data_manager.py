@@ -192,7 +192,7 @@ class ExperimentalDataManager:
         self.logger.debug(f"Generated base_run_id: {base_run_id}")
         
         # Get run identity hash
-        run_identity = self.validator.compute_run_identity(params, measurements)
+        run_identity = self.validator.compute_run_identity(measurements)
         if not run_identity.is_valid:
             raise ValueError(f"Invalid run data: {run_identity.validation_message}")
         
@@ -228,7 +228,7 @@ class ExperimentalDataManager:
         self.logger.debug(f"Final run_id: {proposed_run_id}")
         return proposed_run_id, run_identity.full_hash
 
-    def import_data_file(self, filepath):
+    def import_data_file(self, filepath) -> str:
         """Enhanced version of import_data_file with hash-based IDs"""
         filepath = Path(filepath)
         if not filepath.exists():
@@ -285,7 +285,8 @@ class ExperimentalDataManager:
                 (run_hash,)
             ).fetchone()
             
-            if existing: # TO DO: Check duplicate based on measurement hash (instead of measurement + file path)
+            if existing:
+
                 self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
                 return existing[0]
         

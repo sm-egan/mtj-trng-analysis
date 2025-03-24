@@ -38,7 +38,6 @@ class DataValidator:
     
 
     def compute_run_identity(self, 
-                            metadata: Dict, 
                             measurements: np.ndarray,
                             hash_length: int = 12,
                             n_points: int = 1000) -> RunIdentity:
@@ -47,8 +46,6 @@ class DataValidator:
         
         Parameters:
         -----------
-        metadata : dict
-            Dictionary containing run metadata
         measurements : numpy.ndarray
             Array of measurement values
         hash_length : int
@@ -69,15 +66,11 @@ class DataValidator:
                 validation_message="Measurements contain NaN or infinite values"
             )
         
-        # Create deterministic string representation of data
-        metadata_str = '_'.join(f"{k}:{v}" for k, v in sorted(metadata.items()))
-        # Only include first n_points for hash stability. Ran into issues with larger files
         measurements_str = '_'.join(f"{x:.6f}" for x in check_measurements[:n_points])
         self.logger.debug(f"Preview of measurements_str used in hash (first 100 characters): {measurements_str[:100]}")
-        content_to_hash = f"{metadata_str}|{measurements_str}"
         
         # Compute full hash
-        full_hash = hashlib.sha256(content_to_hash.encode()).hexdigest()
+        full_hash = hashlib.sha256(measurements_str.encode()).hexdigest()
         short_hash = full_hash[:hash_length]
         
         return RunIdentity(

@@ -1,11 +1,12 @@
 # src/parquet_data_manager.py
 import pandas as pd
+import polars as pl
 import numpy as np
 import sqlite3
 import re
 from pathlib import Path
 import logging
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Union
 import hashlib
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -132,7 +133,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         except ValueError as e:
             self.logger.error(f"Run ID generation failed for {filepath.name}")
             return None
-        
+
         # Check if run already exists
         with sqlite3.connect(self.db_path) as conn:
             existing = conn.execute(
@@ -141,8 +142,17 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             ).fetchone()
             
             if existing:
-                self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
-                return existing[0]
+                existing_filename = conn.execute(
+                    "SELECT filename FROM runs WHERE run_hash = ?",
+                    (run_hash,)
+                ).fetchone()
+
+                if existing_filename[0] == filepath.name:
+                    self.logger.info(f"Skipping duplicate run (existing run_id: {existing[0]})")
+                    return existing[0]
+
+                else:
+                    self.logger.warning(f"Found identical run hash with non-identical filenames. A distinct run will be added to database but double-check files {existing_filename[0]} and {filepath.name} in the unlikely event of miscopied filename or identical data.")
         
         # Prepare Parquet file path
         parquet_file = f"{parquet_group}.parquet"
@@ -222,65 +232,292 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
     
     def get_measurements(self, run_id=None):
         """
-        Get measurements from Parquet storage if available.
+        Get measurements from Parquet storage. Optimized to read multiple columns
+        from the same Parquet file in a single operation.
         
         Parameters:
         -----------
-        run_id : str, optional
-            If provided, get measurements for a specific run
+        run_id : str or list/array of str, optional
+            If provided, get measurements for specified run(s)
             
         Returns:
         --------
-        pandas.DataFrame
+        polars.DataFrame
             DataFrame containing measurements
         """
-        if run_id is None:
-            # Getting all measurements could be very inefficient
-            # Let's just return an empty DataFrame with the right columns
-            self.logger.warning("Requesting all measurements is not supported with Parquet storage")
-            return pd.DataFrame(columns=['run_id', 'device_voltage', 'row_index', 'col_index'])
-        
-        # Get Parquet location information
-        with sqlite3.connect(self.db_path) as conn:
-            query = "SELECT parquet_file, parquet_column FROM runs WHERE run_id = ?"
-            result = conn.execute(query, (run_id,)).fetchone()
-            
-            if not result or not result[0] or not result[1]:
-                self.logger.warning(f"No Parquet storage info found for run {run_id}")
-                # Fall back to original method? (there should be no measurements in SQLite)
-                return pd.DataFrame(columns=['run_id', 'device_voltage', 'row_index', 'col_index'])
-            
-            parquet_file, parquet_column = result
-        
-        # Load from Parquet
-        parquet_path = self.parquet_dir / parquet_file
-        if not parquet_path.exists():
-            self.logger.error(f"Parquet file not found: {parquet_path}")
-            return pd.DataFrame(columns=['run_id', 'device_voltage', 'row_index', 'col_index'])
-        
-        try:
-            # Read the specific column from the Parquet file
-            # Use pyarrow to read just the column we need
-            table = pq.read_table(parquet_path, columns=[parquet_column])
-            df = table.to_pandas()
-            
-            # Extract the data from the column
-            voltage_array = df[parquet_column].dropna().values
-            
-            # Create DataFrame in the format expected by the application
-            measurements_df = pd.DataFrame({
-                'run_id': [run_id] * len(voltage_array),
-                'device_voltage': voltage_array,
-                'row_index': [0] * len(voltage_array),
-                'col_index': range(len(voltage_array))
+        empty_df = pl.DataFrame(schema={
+                'run_id': pl.Utf8,
+                'device_voltage': pl.Float32,
+                'index': pl.Int32
             })
+
+        # Handle case where run_id is None
+        if run_id is None:
+            self.logger.warning("Requesting all measurements is not supported with Parquet storage")
+            return empty_df
+        
+        # Handle single run_id
+        if isinstance(run_id, str):
+            runs_info = self._get_parquet_info([run_id])
+            if not runs_info:
+                return empty_df
+            return self._read_multiple_runs_from_parquet(runs_info)
+        
+        # Handle list/array of run_ids
+        if isinstance(run_id, (list, np.ndarray, pd.Series)):
+            run_ids = list(run_id)
+            if not run_ids:
+                return empty_df
             
-            return measurements_df
+            runs_info = self._get_parquet_info(run_ids)
+            if not runs_info:
+                return empty_df
             
-        except Exception as e:
-            self.logger.error(f"Error loading measurements from Parquet: {str(e)}")
-            return pd.DataFrame(columns=['run_id', 'device_voltage', 'row_index', 'col_index'])
+            return self._read_multiple_runs_from_parquet(runs_info)
+        
+        # Invalid run_id type
+        self.logger.error(f"Invalid run_id type: {type(run_id)}")
+        return empty_df
+    
+    def _get_parquet_info(self, run_ids):
+        """
+        Get Parquet file and column information for multiple run IDs.
+        
+        Parameters:
+        -----------
+        run_ids : list
+            List of run IDs to get information for
             
+        Returns:
+        --------
+        dict
+            Dictionary mapping Parquet file paths to lists of (run_id, column_name) tuples
+        """
+        from collections import defaultdict
+        if not run_ids:
+            return {}
+            
+        with sqlite3.connect(self.db_path) as conn:
+            placeholders = ', '.join(['?'] * len(run_ids))
+            query = f"""
+            SELECT run_id, parquet_file, parquet_column 
+            FROM runs 
+            WHERE run_id IN ({placeholders})
+            AND parquet_file IS NOT NULL
+            AND parquet_column IS NOT NULL
+            """
+            
+            results = conn.execute(query, run_ids).fetchall()
+            self.logger.debug(f"Result of query: {str(results)}")
+            
+        if not results:
+            self.logger.warning(f"No Parquet storage info found for any of the requested run IDs")
+            return {}
+
+        # Group by Parquet file to optimize reading
+        parquet_info = defaultdict(dict)
+        for run_id, parquet_file, parquet_column in results:
+            parquet_path = self.parquet_dir / parquet_file
+            if parquet_path.exists():
+                self.logger.debug(f"Appending to parquet_info {run_id} : {parquet_column}")
+
+                parquet_info[str(parquet_path)].update({parquet_column: run_id})
+
+            else:
+                self.logger.warning(f"Parquet file not found: {parquet_path}")
+                
+        return parquet_info
+
+    def _read_multiple_runs_from_parquet(self, parquet_info):
+        """
+        Read measurements for multiple runs, optimized to read columns from the
+        same Parquet file in a single operation.
+        
+        Parameters:
+        -----------
+        parquet_info : dict
+            Dictionary mapping Parquet file paths to lists of (run_id, column_name) tuples
+            
+        Returns:
+        --------
+        polars.DataFrame
+            DataFrame with all measurements
+        """
+        # Initialize empty DataFrame with the right schema
+        empty_df = pl.DataFrame(schema={
+            'run_id': pl.Utf8,
+            'device_voltage': pl.Float32,
+            'index': pl.UInt32
+        })
+
+        if not parquet_info:
+            result_df
+
+        # Loop over each each Parquet file and the list of (run_id, column) tuples for each one
+        for parquet_path, run_info in parquet_info.items():
+            try:
+                # Get all column names to read from this file as a list
+                columns = list(run_info.keys())
+                
+                self.logger.debug(f"Reading {len(columns)} columns from {parquet_path}")
+                
+                # Read all columns at once for this file and convert pyarrow.Table object to Polars DataFrame
+                # Also rename parquet columns to run_ids that match SQLite metadata
+                df = pl.from_arrow(pq.read_table(parquet_path, columns=columns)).rename(run_info)
+
+                return df
+                
+            except Exception as e:
+                self.logger.error(f"Error reading from Parquet file {parquet_path}: {str(e)}")
+        
+        return empty_df
+        
+    
+    # def _read_multiple_runs_from_parquet(self, parquet_info):
+    #     """
+    #     Read measurements for multiple runs, optimized to read columns from the
+    #     same Parquet file in a single operation.
+        
+    #     Parameters:
+    #     -----------
+    #     parquet_info : dict
+    #         Dictionary mapping Parquet file paths to lists of (run_id, column_name) tuples
+            
+    #     Returns:
+    #     --------
+    #     polars.DataFrame
+    #         DataFrame with all measurements
+    #     """
+    #     # Initialize empty DataFrame with the right schema
+    #     result_df = pl.DataFrame(schema={
+    #         'run_id': pl.Utf8,
+    #         'device_voltage': pl.Float32,
+    #         'index': pl.UInt32
+    #     })
+
+    #     if not parquet_info:
+    #         result_df
+
+    #     # Loop over each each Parquet file and the list of (run_id, column) tuples for each one
+    #     for parquet_path, run_info in parquet_info.items():
+    #         try:
+    #             # Get all column names to read from this file
+    #             run_ids = [info[0] for info in run_info]
+    #             columns = [info[1] for info in run_info]
+                
+    #             self.logger.debug(f"Reading {len(columns)} columns from {parquet_path}")
+                
+    #             # Read all columns at once for this file
+    #             table = pq.read_table(parquet_path, columns=columns)
+    #             #df = table.to_pandas()
+                
+    #             # Process each column and concat with results
+    #             # for run_id, column in run_info:
+    #             #     if column in df.columns:
+    #             #         # Extract data and drop NaNs
+    #             #         voltage_array = df[column].dropna().values
+                        
+    #             #         if len(voltage_array) > 0:
+    #             #             try:
+    #             #                 # Create a DataFrame for this run
+    #             #                 run_df = pl.DataFrame({
+    #             #                     'run_id': [run_id] * len(voltage_array),
+    #             #                     'device_voltage': voltage_array,
+    #             #                     'index': np.arange(len(voltage_array)).astype(np.uint32)
+    #             #                 })
+                                
+    #             #                 # Append to results
+    #             #                 result_df = pl.concat([result_df, run_df])
+    #             #             except Exception as e:
+    #             #                 self.logger.error(f"Error creating polars DataFrame: {str(e)}")
+    #             #     else:
+    #             #         self.logger.warning(f"Column {column} not found in {parquet_path}")
+                
+    #         except Exception as e:
+    #             self.logger.error(f"Error reading from Parquet file {parquet_path}: {str(e)}")
+        
+    #     #return result_df
+    #     return pl.from_arrow(table)
+    
+    def get_runs_by_criteria(self, criteria):
+        """
+        Get run IDs that match specific criteria.
+        
+        Parameters:
+        -----------
+        criteria : dict
+            Dictionary of column name to value mappings for filtering
+            
+        Returns:
+        --------
+        list
+            List of run_ids that match the criteria
+        """
+        query_parts = []
+        params = []
+        
+        for column, value in criteria.items():
+            if isinstance(value, (list, tuple)):
+                # Handle IN clause for lists
+                placeholders = ', '.join(['?'] * len(value))
+                query_parts.append(f"{column} IN ({placeholders})")
+                params.extend(value)
+            else:
+                # Handle equality for single values
+                query_parts.append(f"{column} = ?")
+                params.append(value)
+        
+        query = "SELECT run_id FROM runs"
+        if query_parts:
+            query += " WHERE " + " AND ".join(query_parts)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(query, params)
+            run_ids = [row[0] for row in cursor.fetchall()]
+        
+        return run_ids
+    
+    def get_runs_with_measurements(self, criteria):
+        """
+        Get runs matching criteria along with their measurements.
+        
+        Parameters:
+        -----------
+        criteria : dict
+            Dictionary of column name to value mappings for filtering
+            
+        Returns:
+        --------
+        tuple
+            (runs_df, measurements_df) - Polars DataFrames with run metadata and measurements
+        """
+        # First get matching run_ids
+        run_ids = self.get_runs_by_criteria(criteria)
+        
+        if not run_ids:
+            self.logger.warning(f"No runs match the criteria: {criteria}")
+            return (
+                pl.DataFrame(), 
+                pl.DataFrame(schema={
+                    'run_id': pl.Utf8,
+                    'device_voltage': pl.Float32
+                })
+            )
+        
+        # Get run metadata
+        with sqlite3.connect(self.db_path) as conn:
+            placeholders = ', '.join(['?'] * len(run_ids))
+            query = f"SELECT * FROM runs WHERE run_id IN ({placeholders})"
+            runs_df = pd.read_sql_query(query, conn, params=run_ids)
+        
+        # Get measurements for all matching runs
+        measurements_df = self.get_measurements(run_ids)
+        
+        # Convert runs_df to polars
+        runs_pl_df = pl.from_pandas(runs_df)
+        
+        return runs_pl_df, measurements_df
+    
     def get_run_with_measurements(self, run_id):
         """
         Get a single run with all its measurements.
@@ -297,13 +534,19 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         # Get measurements
         measurements_df = self.get_measurements(run_id)
         
-        if measurements_df.empty:
+        if len(measurements_df) == 0:
             return run_df  # Just return the metadata
+            
+        # Convert polars DataFrame to pandas if needed
+        if isinstance(measurements_df, pl.DataFrame):
+            measurements_pd_df = measurements_df.to_pandas()
+        else:
+            measurements_pd_df = measurements_df
             
         # Convert to wide format expected by application
         measurements_wide = pd.DataFrame(
-            [measurements_df['device_voltage'].values],
-            columns=[f'measurement_{i}' for i in range(len(measurements_df))]
+            [measurements_pd_df['device_voltage'].values],
+            columns=[f'measurement_{i}' for i in range(len(measurements_pd_df))]
         )
         
         # Combine run metadata with measurements
