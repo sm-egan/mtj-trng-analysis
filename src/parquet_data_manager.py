@@ -343,7 +343,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         empty_df = pl.DataFrame()
 
         if not parquet_info:
-            result_df
+            empty_df
 
         # Loop over each each Parquet file and the list of (run_id, column) tuples for each one
         for parquet_path, run_info in parquet_info.items():
