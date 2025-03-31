@@ -1,19 +1,21 @@
-# MTJ-TRNG Analysis Setup Guide
-
+MTJ-TRNG Analysis Setup Guide
 This repository contains tools for analyzing MTJ-TRNG experimental data from Google Drive.
+Overview
+The system imports and processes experimental voltage measurements from Magnetic Tunnel Junction (MTJ) devices used for True Random Number Generation (TRNG). Data is stored in a highly optimized format using Apache Parquet files, resulting in:
 
-## Prerequisites
+>60x compression compared to raw data
+Orders of magnitude faster numerical data retrieval
+Column-oriented storage optimized for time-series analysis
 
-- Python 3.8 or higher
-- Access to the Google Drive folder containing experimental data
-- Git (for cloning the repository)
+Prerequisites
 
-## Setup Instructions
+Python 3.8 or higher
+Access to the Google Drive folder containing experimental data
+Git (for cloning the repository)
 
-### 1. Environment Setup
-
-```bash
-# Clone the repository
+Setup Instructions
+1. Environment Setup
+bashCopier# Clone the repository
 git clone [repository-url]
 cd mtj-trng-analysis
 
@@ -28,80 +30,114 @@ source venv/bin/activate
 
 # Install requirements
 pip install -r requirements.txt
+2. Google Drive Setup
+
+Request access to the experiment data folder from the project admin if you don't already have it
+Set up Google Drive API credentials (two options):
+Option A: Use existing credentials
+
+Ask the project admin for the service_account.json file
+Place it in the config directory
+
+Option B: Create your own credentials
+
+Go to the Google Cloud Console
+Create a new project or select an existing one
+Enable the Google Drive API for your project
+Create a Service Account:
+
+Go to "IAM & Admin" > "Service Accounts"
+Click "Create Service Account"
+Give it a name and description
+Grant it Basic > Editor role
+Click "Create Keys" and select JSON format
+Save the downloaded JSON file as service_account.json in the config directory
 
 
-```
+Share your Drive folder with the service account email (found in the JSON file)
 
-### 2. Google Drive Setup
 
-1. Request access to the experiment data folder from the project admin if you don't already have it
+Create your configuration file:
+bashCopier# Copy the template
+cp config/config.template.json config/config.json
+Edit config.json to include:
+jsonCopier{
+  "drive": {
+    "credentials_path": "config/service_account.json",
+    "default_folder_id": "your_folder_id_here"
+  },
+  "database": {
+    "path": "database/mtj_switching_data_parquet.db"
+  }
+}
 
-2. Set up Google Drive API credentials (two options):
 
-   Option A: Use existing credentials
-   - Ask the project admin for the `service_account.json` file
-   - Place it in the `config` directory
+3. Running Data Import (Recommended Parquet Method)
+The Parquet storage method is strongly recommended as it offers:
 
-   Option B: Create your own credentials
-   - Go to the [Google Cloud Console](https://console.cloud.google.com)
-   - Create a new project or select an existing one
-   - Enable the Google Drive API for your project
-   - Create a Service Account:
-     1. Go to "IAM & Admin" > "Service Accounts"
-     2. Click "Create Service Account"
-     3. Give it a name and description
-     4. Grant it Basic > Editor role
-     5. Click "Create Keys" and select JSON format
-     6. Save the downloaded JSON file as `service_account.json` in the `config` directory
-   - Share your Drive folder with the service account email (found in the JSON file)
+Significantly reduced storage requirements
+Much faster data access for analysis
+Better organization of large datasets
 
-3. Create your configuration file:
-   ```bash
-   # Copy the template
-   cp config/config.template.json config/config.json
-   ```
-   
-   Edit `config.json` to include:
-   ```json
-   {
-     "drive": {
-       "credentials_path": "config/service_account.json",
-       "default_folder_id": "your_folder_id_here"
-     },
-     "database": {
-       "path": "database/mtj_switching_data.db"
-     }
-   }
-   ```
+bashCopier# Make sure your virtual environment is activated
+python scripts/import_drive_data_parquet.py
+Optional parameters:
+bashCopier# Specify a different folder ID
+python scripts/import_drive_data_parquet.py --folder_id "your_alternative_folder_id"
 
-### 3. Running Data Import
+# Import a specific number of files (useful for testing)
+python scripts/import_drive_data_parquet.py --n_files 10
 
-```bash
-# Make sure your virtual environment is activated
+# Import randomly selected files instead of first N files
+python scripts/import_drive_data_parquet.py --n_files 10 --shuffle_files True
+
+# Enable debug logging
+python scripts/import_drive_data_parquet.py --logging_level DEBUG
+Alternative: Legacy SQLite Import Method
+The original SQLite storage method has been preserved for backward compatibility or when memory usage is a concern.
+bashCopier# Make sure your virtual environment is activated
 python scripts/import_drive_data.py
-```
+This method stores all data directly in a SQLite database rather than using Parquet files. It may be useful if:
 
-Optional: Specify a different folder ID:
-```bash
-python scripts/import_drive_data.py --folder_id "your_alternative_folder_id"
-```
+You're running on a system with very limited disk space
+You need compatibility with older analysis tools
+You're dealing with a very small dataset where the performance benefits are minimal
 
-### 4. Opening Jupyter Notebook for Data Analysis
-```bash
-#Register the kernel for Jupyter:
+4. Opening Jupyter Notebook for Data Analysis
+bashCopier# Register the kernel for Jupyter
 python -m ipykernel install --user --name=venv
 
-#Start Jupyter notebook for basic analysis:
-jupyter notebooks/test_histogram_switching_prob.ipynb
-```
+# Start Jupyter notebook for analysis
+jupyter notebook notebooks/parquet_data_import.ipynb
+A sample analysis notebook is provided to demonstrate the new Parquet-based data access methods.
+Analyzing Data
+The ParquetExperimentalDataManager class provides an API for loading and analyzing experimental data:
+pythonCopierfrom src.parquet_data_manager import ParquetExperimentalDataManager
 
-## Troubleshooting
+# Initialize the data manager
+data_manager = ParquetExperimentalDataManager()
 
+# Get measurements for specific run IDs
+run_ids = data_manager.get_runs_by_criteria({'device_id': '023_07'})
+measurements = data_manager.get_measurements(run_ids[:10])
+
+# Stack measurements for analysis
+stacked_measurements = data_manager.stack_measurements(measurements)
+
+# Access the analysis tools
+from src.analysis.processing import find_p_ap_states, calculate_switching_probability
+
+# Find P and AP states
+threshold, peaks, tmr = find_p_ap_states(stacked_measurements)
+
+# Calculate switching probabilities for each run
+switching_df = calculate_switching_probability(stacked_measurements, group_by='run_id')
+Troubleshooting
 Common issues:
-- If you see credential errors, check that `service_account.json` is in the correct location
-- If the script can't find files, verify your folder ID is correct
-- For environment issues, ensure you've activated the virtual environment before running scripts
 
-## Questions?
+If you see credential errors, check that service_account.json is in the correct location
+If the script can't find files, verify your folder ID is correct
+For environment issues, ensure you've activated the virtual environment before running scripts
 
-Contact Shannon for assistance or access requests.
+Questions?
+Contact the project admin for assistance or access requests.RéessayerClaude n'a pas accès à Internet. Les liens fournis peuvent ne pas être précis ou à jour.Claude peut faire des erreurs. Assurez-vous de vérifier ses réponses.
