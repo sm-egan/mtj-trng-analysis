@@ -524,16 +524,25 @@ class ExperimentalDataManager:
             return result
 
     def add_device_to_table(self, device_id, threshold, peaks, tmr):
-        """Add a device to the devices table"""
+        """Add a device to the devices table with proper float conversion"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO devices (device_id, threshold, p_state_voltage, ap_state_voltage, tmr)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(device_id) DO UPDATE SET
-                threshold = ?, p_state_voltage = ?, ap_state_voltage = ?, tmr = ?, last_updated = CURRENT_TIMESTAMP
-            """, (device_id, threshold, peaks[0], peaks[1], tmr, 
-                threshold, peaks[0], peaks[1], tmr))
+                threshold = excluded.threshold, 
+                p_state_voltage = excluded.p_state_voltage, 
+                ap_state_voltage = excluded.ap_state_voltage, 
+                tmr = excluded.tmr, 
+                last_updated = CURRENT_TIMESTAMP
+            """, (
+                device_id, 
+                float(threshold), 
+                float(peaks[0]), 
+                float(peaks[1]), 
+                float(tmr)
+            ))
             conn.commit()
             self.logger.info(f"Added/updated device {device_id} in devices table")
 

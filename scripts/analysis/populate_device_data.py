@@ -53,11 +53,11 @@ def main():
         )
         
         logger.info("Device data population completed successfully")
+        return 0
     except Exception as e:
         logger.error(f"Error during device data population: {e}", exc_info=True)
         return 1
     
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
