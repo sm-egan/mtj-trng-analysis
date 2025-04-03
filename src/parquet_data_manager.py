@@ -59,13 +59,13 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 cursor.execute("ALTER TABLE runs ADD COLUMN parquet_file TEXT")
             
             # Add parquet_column column if it doesn't exist (for columnar storage)
-            if 'parquet_column' not in columns:
-                self.logger.info("Adding parquet_column column to runs table")
-                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_column TEXT")
+            if 'parquet_analog_column' not in columns:
+                self.logger.info("Adding parquet_analog_column column to runs table")
+                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_analog_column TEXT")
 
-            if 'binary_parquet_column' not in columns:
-                self.logger.info("Adding binary_parquet_column column to runs table")
-                cursor.execute("ALTER TABLE runs ADD COLUMN binary_parquet_column TEXT")
+            if 'parquet_binary_column' not in columns:
+                self.logger.info("Adding parquet_binary_column column to runs table")
+                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_binary_column TEXT")
             
             conn.commit()
     
@@ -111,6 +111,8 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         params = self.parse_filename(filepath.name)
         if device_id:
             params['device_id'] = device_id
+
+        # Check if device already exists in database
         
         # Load the data file
         try:

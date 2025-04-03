@@ -67,7 +67,8 @@ class ExperimentalDataManager:
                     p_state_voltage REAL,
                     ap_state_voltage REAL,
                     threshold REAL,
-                    tmr REAL
+                    tmr REAL,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
 
