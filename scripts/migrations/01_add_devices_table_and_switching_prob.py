@@ -12,6 +12,37 @@ def check_if_column_exists(conn, table, column):
     columns = [info[1] for info in cursor.fetchall()]
     return column in columns
 
+def get_table_columns(conn, table):
+    """Get detailed column information for a table"""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"PRAGMA table_info({table})")
+        # Each row contains: (cid, name, type, notnull, dflt_value, pk)
+        columns = cursor.fetchall()
+        return columns
+    finally:
+        cursor.close()
+
+def check_and_add_missing_columns(conn, table_name, expected_columns):
+    """Check if all expected columns exist in the table, add any missing ones"""
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    existing_columns = {info[1] for info in cursor.fetchall()}
+    
+    missing_columns = [col for col, type_ in expected_columns.items() 
+                       if col not in existing_columns]
+    
+    if missing_columns:
+        print(f"Adding missing columns to {table_name}: {missing_columns}")
+        for col in missing_columns:
+            try:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} {expected_columns[col]}")
+                print(f"Added column {col} to {table_name}")
+            except Exception as e:
+                print(f"Error adding column {col}: {e}")
+    else:
+        print(f"All expected columns exist in {table_name}")
+
 def migrate_database(db_path):
     """
     Add devices table, switching_probability, and binary data column tracking to runs
@@ -33,14 +64,25 @@ def migrate_database(db_path):
             CREATE TABLE devices (
                 device_id TEXT PRIMARY KEY,
                 threshold REAL,
-                peak_p REAL,
-                peak_ap REAL,
+                p_state_voltage REAL,
+                ap_state_voltage REAL,
                 tmr REAL,
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """)
         else:
             print("devices table already exists")
+            # Check columns
+            expected_columns = {
+                "device_id": "TEXT PRIMARY KEY",
+                "threshold": "REAL",
+                "p_state_voltage": "REAL",
+                "ap_state_voltage": "REAL",
+                "tmr": "REAL",
+                "last_updated": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            }
+            check_and_add_missing_columns(conn, "devices", expected_columns)
+
         
         # Check and add switching_probability
         if not check_if_column_exists(conn, "runs", "switching_probability"):

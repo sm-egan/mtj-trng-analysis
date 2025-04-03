@@ -67,8 +67,7 @@ class ExperimentalDataManager:
                     p_state_voltage REAL,
                     ap_state_voltage REAL,
                     threshold REAL,
-                    tmr REAL,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    tmr REAL
                 )
             ''')
 
@@ -502,6 +501,41 @@ class ExperimentalDataManager:
                 ))
             
             conn.commit()
+
+    def get_unique_devices(self):
+        """Get a list of all unique device IDs from the runs table"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT device_id FROM runs WHERE device_id IS NOT NULL")
+            device_ids = [row[0] for row in cursor.fetchall()]
+            self.logger.debug(f"Found {len(device_ids)} unique devices")
+            return device_ids
+
+    def get_device_info(self, device_id):
+        """Check if a device is already in the devices table"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,))
+            result = cursor.fetchone()
+            if result:
+                self.logger.debug(f"Found device {device_id} in database")
+            else:
+                self.logger.debug(f"Device {device_id} not found in database")
+            return result
+
+    def add_device_to_table(self, device_id, threshold, peaks, tmr):
+        """Add a device to the devices table"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO devices (device_id, threshold, p_state_voltage, ap_state_voltage, tmr)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(device_id) DO UPDATE SET
+                threshold = ?, p_state_voltage = ?, ap_state_voltage = ?, tmr = ?, last_updated = CURRENT_TIMESTAMP
+            """, (device_id, threshold, peaks[0], peaks[1], tmr, 
+                threshold, peaks[0], peaks[1], tmr))
+            conn.commit()
+            self.logger.info(f"Added/updated device {device_id} in devices table")
 
     def delete_run(self, run_id: str) -> bool:
         """
