@@ -62,6 +62,10 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             if 'parquet_column' not in columns:
                 self.logger.info("Adding parquet_column column to runs table")
                 cursor.execute("ALTER TABLE runs ADD COLUMN parquet_column TEXT")
+
+            if 'binary_parquet_column' not in columns:
+                self.logger.info("Adding binary_parquet_column column to runs table")
+                cursor.execute("ALTER TABLE runs ADD COLUMN binary_parquet_column TEXT")
             
             conn.commit()
     
@@ -363,45 +367,6 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 self.logger.error(f"Error reading from Parquet file {parquet_path}: {str(e)}")
         
         return empty_df
-
-    # def stack_measurements(self, measurements_df):
-    #     """
-    #     Parameters:
-    #     -----------
-    #     measurements_df : polars.DataFrame
-    #         Dataframe in the format output by get_measurements where each column label is a run ID, rows are device voltages
-
-
-    #     Returns:
-    #     --------
-    #     polars.DataFrame
-    #         DataFrame with vertically stacked measurements and run_id info in each row
-    #     """
-    #     stacked_df = pl.DataFrame(schema={
-    #             'run_id': pl.Utf8,
-    #             'row_index': pl.UInt32,
-    #             'device_voltage': pl.Float32
-    #         })
-
-    #     for run_id in measurements_df.columns:
-    #         try:
-    #             voltage_column = measurements_df[run_id].drop_nulls()
-    #             self.logger.debug(f"Shape of column {voltage_column.shape}. Sample of voltage column to stack: {str(voltage_column.head(10))}")
-
-    #             voltage_column = voltage_column.rename("device_voltage")
-
-    #             run_df = pl.DataFrame({
-    #                 'run_id': [run_id]*len(voltage_column),
-    #                 'row_index': np.arange(len(voltage_column)).astype(np.uint32)
-    #                 'device_voltage': voltage_column
-    #                 })
-
-    #             stacked_df = pl.concat([stacked_df, run_df])
-
-    #         except Exception as e:
-    #             self.logger.error(f"Error stacking column {run_id} from measurements DataFrame", exc_info=True)
-    
-    #     return stacked_df
 
     def stack_measurements(self, measurements_df):
         """

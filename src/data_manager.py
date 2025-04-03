@@ -60,7 +60,18 @@ class ExperimentalDataManager:
         self.logger.info("Initializing database...")
         
         with sqlite3.connect(self.db_path) as conn:
-            # Create runs table with current schema
+            # Create devices table to store device-level parameters
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS devices (
+                    device_id TEXT PRIMARY KEY,
+                    p_state_voltage REAL,
+                    ap_state_voltage REAL,
+                    threshold REAL,
+                    tmr REAL
+                )
+            ''')
+
+            # Create runs table
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS runs (
                     run_id TEXT PRIMARY KEY,
@@ -430,6 +441,66 @@ class ExperimentalDataManager:
                 return result
             
             return run_df
+
+    def get_device_parameters(self, device_id):
+        """Get parameters for a device from the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            result = conn.execute(
+                "SELECT device_id, p_state_voltage, ap_state_voltage, threshold, tmr FROM devices WHERE device_id = ?",
+                (device_id,)
+            ).fetchone()
+            
+        if not result:
+            return None
+            
+        return {
+            'device_id': result[0],
+            'p_state_voltage': result[1],
+            'ap_state_voltage': result[2],
+            'threshold': result[3],
+            'tmr': result[4]
+        }
+
+    def update_device_parameters(self, device_params):
+        """Update device parameters in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            # Check if device exists
+            exists = conn.execute(
+                "SELECT 1 FROM devices WHERE device_id = ?",
+                (device_params['device_id'],)
+            ).fetchone()
+            
+            if exists:
+                # Update existing device
+                conn.execute('''
+                    UPDATE devices
+                    SET p_state_voltage = ?,
+                        ap_state_voltage = ?,
+                        threshold = ?,
+                        tmr = ?
+                    WHERE device_id = ?
+                ''', (
+                    device_params['p_state_voltage'],
+                    device_params['ap_state_voltage'],
+                    device_params['threshold'],
+                    device_params['tmr'],
+                    device_params['device_id']
+                ))
+            else:
+                # Insert new device
+                conn.execute('''
+                    INSERT INTO devices
+                    (device_id, p_state_voltage, ap_state_voltage, threshold, tmr)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    device_params['device_id'],
+                    device_params['p_state_voltage'],
+                    device_params['ap_state_voltage'],
+                    device_params['threshold'],
+                    device_params['tmr']
+                ))
+            
+            conn.commit()
 
     def delete_run(self, run_id: str) -> bool:
         """
