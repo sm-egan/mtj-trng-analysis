@@ -80,6 +80,8 @@ def find_p_ap_states(df, sample_size=100000, init_method='maxmin'):
 
 def calculate_switching_probability(measurements, threshold=None, group_by=None):
     """
+    TO DO: Add check for sign of s_amplitude to determin if sw_prob = 1 - avg or sw_prob = avg (avg of binary values)
+
     Calculate the switching probability of MTJ device.
     
     Args:

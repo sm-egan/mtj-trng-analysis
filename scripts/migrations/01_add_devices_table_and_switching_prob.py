@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import logging
 
+
 def check_if_column_exists(conn, table, column):
     """Check if a column exists in a table"""
     cursor = conn.cursor()
@@ -122,6 +123,8 @@ def migrate_database(db_path):
             """)
         else:
             print("device_id_fk column already exists")
+
+        # Now that schema is updated
         
         print(f"Successfully migrated database at {db_path}")
 

@@ -604,7 +604,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             except Exception as e:
                 self.logger.error(f"Error processing device {device_id}: {e}", exc_info=True)
 
-    def compute_binary_data(self, device_id=None, run_ids=None, force_recalculate=False):
+    def write_binary_data(self, device_id=None, run_ids=None, force_recalculate=False):
         """
         Compute binary values for analog data based on thresholds
         
@@ -754,7 +754,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                     except Exception as e:
                         self.logger.error(f"Error processing binary data for run {run_id}: {e}", exc_info=True)
 
-    def calculate_switching_probabilities(self, device_id=None, run_ids=None, force_recalculate=False):
+    def write_switching_probabilities(self, device_id=None, run_ids=None, force_recalculate=False):
         """
         Calculate switching probabilities for runs
         
