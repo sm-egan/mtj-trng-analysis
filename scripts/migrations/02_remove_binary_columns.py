@@ -30,10 +30,10 @@ def check_column_exists(conn, table, column):
     columns = [info[1] for info in cursor.fetchall()]
     return column in columns
 
-def remove_binary_columns(db_path, parquet_dir, dry_run=True):
+def remove_binary_columns(db_path, parquet_dir):
     """Remove binary columns from parquet files and update database schema"""
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting binary column removal migration (dry run: {dry_run})")
+    logger.info(f"Starting binary column removal migration")
     
     # Connect to database
     conn = sqlite3.connect(db_path)
@@ -72,14 +72,11 @@ def remove_binary_columns(db_path, parquet_dir, dry_run=True):
             logger.info(f"Found {len(binary_columns)} binary columns in {parquet_file}")
             
             # Remove binary columns
-            if not dry_run:
-                df_clean = df.drop(columns=binary_columns)
-                
-                # Write back to parquet
-                df_clean.to_parquet(parquet_path, engine='pyarrow', index=False)
-                logger.info(f"Removed binary columns from {parquet_file}")
-            else:
-                logger.info(f"Would remove: {', '.join(binary_columns)} (dry run)")
+            df_clean = df.drop(columns=binary_columns)
+            
+            # Write back to parquet
+            df_clean.to_parquet(parquet_path, engine='pyarrow', index=False)
+            logger.info(f"Removed binary columns from {parquet_file}")
             
         except Exception as e:
             logger.error(f"Error processing {parquet_file}: {e}")
@@ -87,80 +84,108 @@ def remove_binary_columns(db_path, parquet_dir, dry_run=True):
     # Step 2: Update database schema
     logger.info("\nSTEP 2: Updating database schema")
     
-    # Check if parquet_binary_column exists
+    # Check which columns exist
     has_binary_column = check_column_exists(conn, "runs", "parquet_binary_column")
     has_analog_column = check_column_exists(conn, "runs", "parquet_analog_column")
     has_parquet_column = check_column_exists(conn, "runs", "parquet_column")
     
-    # Verify we have correct columns to start with
-    if not has_binary_column:
-        logger.warning("parquet_binary_column doesn't exist in runs table, skipping its removal")
+    # Handle column renaming/dropping logic
+    columns_to_remove = []
     
-    if not has_analog_column:
-        logger.warning("parquet_analog_column doesn't exist in runs table, can't rename it")
+    # Always remove binary column
+    if has_binary_column:
+        logger.info("Setting all parquet_binary_column values to NULL")
+        cursor.execute("UPDATE runs SET parquet_binary_column = NULL")
+        conn.commit()
+        columns_to_remove.append("parquet_binary_column")
     
-    if has_parquet_column:
-        logger.warning("parquet_column already exists in runs table, can't rename to it")
+    # Check if both parquet_column and parquet_analog_column exist
+    if has_parquet_column and has_analog_column:
+        logger.info("Both parquet_column and parquet_analog_column exist. Checking for data to merge...")
+        
+        # First check if there are NULL values in parquet_column that have data in analog_column
+        cursor.execute("""
+            SELECT COUNT(*) FROM runs 
+            WHERE parquet_column IS NULL AND parquet_analog_column IS NOT NULL
+        """)
+        null_column_count = cursor.fetchone()[0]
+        
+        if null_column_count > 0:
+            logger.info(f"Found {null_column_count} rows where parquet_column is NULL but analog_column has data")
+            logger.info("Copying these values from analog column to parquet_column")
+            
+            # Copy missing values from analog to parquet_column
+            cursor.execute("""
+                UPDATE runs 
+                SET parquet_column = parquet_analog_column 
+                WHERE parquet_column IS NULL AND parquet_analog_column IS NOT NULL
+            """)
+            conn.commit()
+        
+        # Now check if there are any remaining mismatches
+        cursor.execute("""
+            SELECT COUNT(*) FROM runs 
+            WHERE parquet_column IS NOT NULL AND parquet_analog_column IS NOT NULL
+            AND parquet_column != parquet_analog_column
+        """)
+        mismatch_count = cursor.fetchone()[0]
+        
+        if mismatch_count > 0:
+            logger.warning(f"Found {mismatch_count} rows where values don't match even after merging!")
+            logger.warning("This suggests a change in run_id or naming method.")
+            logger.warning("Keeping both columns for manual review.")
+        else:
+            # Check if there are any remaining cases where analog has data but parquet doesn't
+            cursor.execute("""
+                SELECT COUNT(*) FROM runs 
+                WHERE parquet_column IS NULL AND parquet_analog_column IS NOT NULL
+            """)
+            remaining_null_count = cursor.fetchone()[0]
+            
+            if remaining_null_count > 0:
+                logger.warning(f"Still found {remaining_null_count} problematic rows after attempting merge")
+                logger.warning("Keeping both columns for manual review.")
+            else:
+                logger.info("All values match or have been merged. Will remove parquet_analog_column.")
+                columns_to_remove.append("parquet_analog_column")
     
-    if not dry_run:
+    # If parquet_column doesn't exist but analog_column does, create and copy
+    elif not has_parquet_column and has_analog_column:
+        logger.info("Creating parquet_column and copying data from parquet_analog_column")
+        cursor.execute("ALTER TABLE runs ADD COLUMN parquet_column TEXT")
+        cursor.execute("UPDATE runs SET parquet_column = parquet_analog_column")
+        conn.commit()
+        
+        # After copying, we can remove the analog column
+        columns_to_remove.append("parquet_analog_column")
+    
+    # Now remove columns if needed
+    if columns_to_remove:
         try:
             # Start a transaction
             cursor.execute("BEGIN TRANSACTION")
             
-            # 1. Copy data from parquet_analog_column to parquet_column if needed
-            if has_analog_column and not has_parquet_column:
-                logger.info("Creating parquet_column and copying data from parquet_analog_column")
-                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_column TEXT")
-                cursor.execute("UPDATE runs SET parquet_column = parquet_analog_column")
+            # Get current table schema without the columns to remove
+            cursor.execute("PRAGMA table_info(runs)")
+            columns = [info[1] for info in cursor.fetchall() if info[1] not in columns_to_remove]
+            columns_sql = ", ".join(columns)
             
-            # 2. Drop parquet_binary_column
-            if has_binary_column:
-                logger.info("Dropping parquet_binary_column")
-                # SQLite doesn't directly support dropping columns before version 3.35.0
-                # So we need to create a new table without that column
-                
-                # Get current table schema without the binary column
-                cursor.execute("PRAGMA table_info(runs)")
-                columns = [info[1] for info in cursor.fetchall() if info[1] != "parquet_binary_column"]
-                columns_sql = ", ".join(columns)
-                
-                # Create a new table without binary column
-                cursor.execute(f"""
-                    CREATE TABLE runs_new (
-                        {columns_sql},
-                        PRIMARY KEY (run_id)
-                    )
-                """)
-                
-                # Copy data
-                cursor.execute(f"INSERT INTO runs_new SELECT {columns_sql} FROM runs")
-                
-                # Replace old table
-                cursor.execute("DROP TABLE runs")
-                cursor.execute("ALTER TABLE runs_new RENAME TO runs")
+            logger.info(f"Creating new table without columns: {', '.join(columns_to_remove)}")
             
-            # 3. Drop parquet_analog_column if we created parquet_column
-            if has_analog_column and not has_parquet_column:
-                logger.info("Dropping parquet_analog_column")
-                # Get current table schema without the analog column
-                cursor.execute("PRAGMA table_info(runs)")
-                columns = [info[1] for info in cursor.fetchall() if info[1] != "parquet_analog_column"]
-                columns_sql = ", ".join(columns)
-                
-                # Create a new table without analog column
-                cursor.execute(f"""
-                    CREATE TABLE runs_new (
-                        {columns_sql},
-                        PRIMARY KEY (run_id)
-                    )
-                """)
-                
-                # Copy data
-                cursor.execute(f"INSERT INTO runs_new SELECT {columns_sql} FROM runs")
-                
-                # Replace old table
-                cursor.execute("DROP TABLE runs")
-                cursor.execute("ALTER TABLE runs_new RENAME TO runs")
+            # Create a new table without unwanted columns
+            cursor.execute(f"""
+                CREATE TABLE runs_new (
+                    {columns_sql},
+                    PRIMARY KEY (run_id)
+                )
+            """)
+            
+            # Copy data
+            cursor.execute(f"INSERT INTO runs_new SELECT {columns_sql} FROM runs")
+            
+            # Replace old table
+            cursor.execute("DROP TABLE runs")
+            cursor.execute("ALTER TABLE runs_new RENAME TO runs")
             
             # Commit the transaction
             conn.commit()
@@ -170,11 +195,7 @@ def remove_binary_columns(db_path, parquet_dir, dry_run=True):
             conn.rollback()
             logger.error(f"Error updating database schema: {e}")
     else:
-        logger.info("Would update database schema (dry run)")
-        if has_binary_column:
-            logger.info("Would drop parquet_binary_column")
-        if has_analog_column and not has_parquet_column:
-            logger.info("Would rename parquet_analog_column to parquet_column")
+        logger.info("No columns need to be removed from the database schema")
     
     # Close database connection
     conn.close()
@@ -187,18 +208,12 @@ def main():
                       help="Path to SQLite database")
     parser.add_argument("--parquet_dir", default="database/parquet_data", 
                       help="Directory containing parquet files")
-    parser.add_argument("--execute", action="store_true", 
-                      help="Execute the migration (without this flag, it's a dry run)")
     
     args = parser.parse_args()
     
     logger = setup_logging()
     
-    if not args.execute:
-        logger.info("Running in DRY RUN mode. No changes will be made.")
-        logger.info("Use --execute to actually perform the migration.")
-    
-    remove_binary_columns(args.db_path, args.parquet_dir, dry_run=not args.execute)
+    remove_binary_columns(args.db_path, args.parquet_dir)
 
 if __name__ == "__main__":
     main()

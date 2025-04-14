@@ -58,14 +58,10 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 self.logger.info("Adding parquet_file column to runs table")
                 cursor.execute("ALTER TABLE runs ADD COLUMN parquet_file TEXT")
             
-            # Add parquet_analog_column column if it doesn't exist (for columnar storage)
-            if 'parquet_analog_column' not in columns:
-                self.logger.info("Adding parquet_analog_column column to runs table")
-                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_analog_column TEXT")
-
-            if 'parquet_binary_column' not in columns:
-                self.logger.info("Adding parquet_binary_column column to runs table")
-                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_binary_column TEXT")
+            # Add parquet_column column if it doesn't exist (for columnar storage)
+            if 'parquet_column' not in columns:
+                self.logger.info("Adding parquet_column column to runs table")
+                cursor.execute("ALTER TABLE runs ADD COLUMN parquet_column TEXT")
             
             conn.commit()
     
@@ -218,7 +214,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             cursor.execute('''
                 INSERT INTO runs 
                 (run_id, run_hash, device_id, filename, hz, row_number, r_amplitude, r_width,
-                 s_amplitude, s_width, field, source, repeats, parquet_file, parquet_analog_column)
+                 s_amplitude, s_width, field, source, repeats, parquet_file, parquet_column)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 run_id, run_hash, 
@@ -302,11 +298,11 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         with sqlite3.connect(self.db_path) as conn:
             placeholders = ', '.join(['?'] * len(run_ids))
             query = f"""
-            SELECT run_id, parquet_file, parquet_analog_column 
+            SELECT run_id, parquet_file, parquet_column 
             FROM runs 
             WHERE run_id IN ({placeholders})
             AND parquet_file IS NOT NULL
-            AND parquet_analog_column IS NOT NULL
+            AND parquet_column IS NOT NULL
             """
             
             results = conn.execute(query, run_ids).fetchall()
@@ -318,12 +314,12 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
 
         # Group by Parquet file to optimize reading
         parquet_info = defaultdict(dict)
-        for run_id, parquet_file, parquet_analog_column in results:
+        for run_id, parquet_file, parquet_column in results:
             parquet_path = self.parquet_dir / parquet_file
             if parquet_path.exists():
-                self.logger.debug(f"Appending to parquet_info {run_id} : {parquet_analog_column}")
+                self.logger.debug(f"Appending to parquet_info {run_id} : {parquet_column}")
 
-                parquet_info[str(parquet_path)].update({parquet_analog_column: run_id})
+                parquet_info[str(parquet_path)].update({parquet_column: run_id})
 
             else:
                 self.logger.warning(f"Parquet file not found: {parquet_path}")
@@ -604,176 +600,6 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             except Exception as e:
                 self.logger.error(f"Error processing device {device_id}: {e}", exc_info=True)
 
-    def write_binary_data(self, device_id=None, run_ids=None, force_recalculate=False):
-        """
-        Compute binary values for analog data based on thresholds
-        
-        Args:
-            device_id: If provided, only process this specific device
-            run_ids: If provided, only process these specific run IDs (overrides device_id)
-            force_recalculate: If True, recalculate binary data even if it exists
-        """
-        import pyarrow.parquet as pq
-        import pyarrow as pa
-        import numpy as np
-        from pathlib import Path
-        
-        # Get list of runs to process
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            if run_ids:
-                # Process specific run IDs
-                placeholders = ', '.join(['?'] * len(run_ids))
-                runs_query = f"""
-                    SELECT r.run_id, r.device_id, r.parquet_file, r.parquet_analog_column, r.parquet_binary_column
-                    FROM runs r
-                    WHERE r.run_id IN ({placeholders})
-                    AND r.parquet_file IS NOT NULL AND r.parquet_analog_column IS NOT NULL
-                """
-                if not force_recalculate:
-                    runs_query += " AND (r.parquet_binary_column IS NULL OR r.parquet_binary_column = '')"
-                    
-                cursor.execute(runs_query, run_ids)
-                runs = cursor.fetchall()
-                self.logger.info(f"Found {len(runs)} runs to process from provided run_ids")
-                
-                # Group runs by device for processing
-                runs_by_device = {}
-                for run in runs:
-                    run_id, dev_id, parquet_file, analog_column, binary_column = run
-                    if dev_id not in runs_by_device:
-                        runs_by_device[dev_id] = []
-                    runs_by_device[dev_id].append(run)
-                
-                device_ids = list(runs_by_device.keys())
-                
-            elif device_id:
-                # Process runs for specific device
-                device_ids = [device_id]
-                runs_by_device = {}
-            else:
-                # Process all devices
-                device_ids = self.get_unique_devices()
-                runs_by_device = {}
-        
-            self.logger.info(f"Computing binary data for {len(device_ids)} devices")
-            
-            # Process each device
-            for dev_id in device_ids:
-                self.logger.info(f"Processing binary data for device: {dev_id}")
-                
-                # Get the device threshold
-                cursor.execute("SELECT threshold FROM devices WHERE device_id = ?", (dev_id,))
-                device_row = cursor.fetchone()
-                
-                if not device_row:
-                    self.logger.warning(f"Device {dev_id} not found in devices table, skipping")
-                    continue
-                    
-                threshold = device_row[0]
-                self.logger.info(f"Using threshold {threshold:.6f} for device {dev_id}")
-                
-                # Get runs for this device if not already fetched
-                if dev_id not in runs_by_device or not runs_by_device[dev_id]:
-                    runs_query = """
-                        SELECT r.run_id, r.parquet_file, r.parquet_analog_column, r.parquet_binary_column
-                        FROM runs r
-                        WHERE r.device_id = ?
-                        AND r.parquet_file IS NOT NULL AND r.parquet_analog_column IS NOT NULL
-                    """
-                    if not force_recalculate:
-                        runs_query += " AND (r.parquet_binary_column IS NULL OR r.parquet_binary_column = '')"
-                        
-                    cursor.execute(runs_query, (dev_id,))
-                    runs_by_device[dev_id] = cursor.fetchall()
-                
-                runs = runs_by_device[dev_id]
-                if not runs:
-                    self.logger.info(f"No runs to process for device {dev_id}")
-                    continue
-                    
-                self.logger.info(f"Processing {len(runs)} runs for device {dev_id}")
-                
-                # Process each run
-                for run_row in runs:
-                    if len(run_row) == 4:  # From device query
-                        run_id, parquet_file, analog_column, binary_column = run_row
-                    else:  # From run_ids query
-                        run_id, _, parquet_file, analog_column, binary_column = run_row
-                        
-                    try:
-                        # Generate binary column name if needed
-                        if not binary_column:
-                            binary_column = f"binary_{analog_column}"
-                        
-                        # Read the Parquet file
-                        parquet_path = Path(self.parquet_dir) / parquet_file
-                        if not parquet_path.exists():
-                            self.logger.warning(f"Parquet file not found: {parquet_path}")
-                            continue
-                        
-                        # Read original parquet file
-                        table = pq.read_table(parquet_path)
-                        
-                        # Check if binary column already exists
-                        if binary_column in table.column_names and not force_recalculate:
-                            self.logger.info(f"Binary column {binary_column} already exists in {parquet_file}, updating DB")
-                            cursor.execute("""
-                                UPDATE runs SET parquet_binary_column = ? WHERE run_id = ?
-                            """, (binary_column, run_id))
-                            conn.commit()
-                            continue
-                        
-                        # Read analog data
-                        if analog_column not in table.column_names:
-                            self.logger.warning(f"Analog column {analog_column} not found in {parquet_file}")
-                            continue
-                        
-                        self.logger.info(f"CALCULATING BINARY VALUES FOR RUN {run_id} IN {parquet_file}")
-                        # Convert to pandas for processing
-                        df = table.to_pandas()
-                        # Compute number of NaN values in analog data
-                        self.logger.debug(f"Checking for NaN values in analog data: {df[analog_column].isna().sum()}")
-                        
-                        # Create a mask of non-NaN values
-                        valid_mask = ~df[analog_column].isna()
-
-                        # Initialize binary values as NaN
-                        binary_values = pd.Series(np.nan, index=df.index)
-
-                        # Only set values where analog data is not NaN
-                        binary_values[valid_mask] = df[analog_column][valid_mask] > threshold
-                        # Compute binary values (greater than threshold = 1, otherwise 0)
-                        #binary_values = (df[analog_column] > threshold)
-                        
-                        self.logger.info(f"Number of values above threshold: {binary_values.sum()}/{len(binary_values)}")
-                        # Compute number of NaN values in binary data
-                        self.logger.debug(f"Checking for NaN values in binary data: {binary_values.isna().sum()}")
-                        
-                        if df[analog_column].isna().sum() != binary_values.isna().sum():   
-                            # If the number of NaN values is not equal, log a warning and skip run
-                            self.logger.warning(f"Unequal number of NaN values in analog and binary data for run {run_id}, skipping")
-                            continue
-
-                        # Add binary column
-                        df[binary_column] = binary_values
-                        
-                        # Convert back to pyarrow and write
-                        new_table = pa.Table.from_pandas(df)
-                        pq.write_table(new_table, parquet_path)
-                        
-                        # Update the database entry
-                        cursor.execute("""
-                            UPDATE runs SET parquet_binary_column = ? WHERE run_id = ?
-                        """, (binary_column, run_id))
-                        conn.commit()
-                        
-                        self.logger.info(f"Added binary column {binary_column} to {parquet_file} and updated database")
-                        
-                    except Exception as e:
-                        self.logger.error(f"Error processing binary data for run {run_id}: {e}", exc_info=True)
-
     def write_switching_probabilities(self, device_id=None, run_ids=None, force_recalculate=False):
         """
         Calculate switching probabilities for runs
@@ -795,11 +621,11 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 # Process specific run IDs
                 placeholders = ', '.join(['?'] * len(run_ids))
                 runs_query = f"""
-                    SELECT r.run_id, r.device_id, r.parquet_file, r.parquet_binary_column, r.s_amplitude
+                    SELECT r.run_id, r.device_id, r.parquet_file, r.parquet_column, r.s_amplitude
                     FROM runs r
                     WHERE r.run_id IN ({placeholders})
                     AND r.parquet_file IS NOT NULL 
-                    AND r.parquet_binary_column IS NOT NULL
+                    AND r.parquet_column IS NOT NULL
                 """
                 if not force_recalculate:
                     runs_query += " AND (r.switching_probability IS NULL)"
@@ -811,7 +637,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 # Group runs by device for processing
                 runs_by_device = {}
                 for run in runs:
-                    run_id, dev_id, parquet_file, binary_column, s_amplitude = run
+                    run_id, dev_id, parquet_file, parquet_column, s_amplitude = run
                     if dev_id not in runs_by_device:
                         runs_by_device[dev_id] = []
                     runs_by_device[dev_id].append(run)
@@ -833,14 +659,25 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             for dev_id in device_ids:
                 self.logger.info(f"Processing switching probabilities for device: {dev_id}")
                 
+                # Get the device threshold
+                cursor.execute("SELECT threshold FROM devices WHERE device_id = ?", (dev_id,))
+                device_row = cursor.fetchone()
+                
+                if not device_row:
+                    self.logger.warning(f"Device {dev_id} not found in devices table, skipping")
+                    continue
+                    
+                threshold = device_row[0]
+                self.logger.info(f"Using threshold {threshold:.6f} for device {dev_id}")
+
                 # Get runs for this device if not already fetched
                 if dev_id not in runs_by_device or not runs_by_device[dev_id]:
                     runs_query = """
-                        SELECT r.run_id, r.parquet_file, r.parquet_binary_column, r.s_amplitude
+                        SELECT r.run_id, r.parquet_file, r.parquet_column, r.s_amplitude
                         FROM runs r
                         WHERE r.device_id = ?
                         AND r.parquet_file IS NOT NULL 
-                        AND r.parquet_binary_column IS NOT NULL
+                        AND r.parquet_column IS NOT NULL
                     """
                     if not force_recalculate:
                         runs_query += " AND (r.switching_probability IS NULL)"
@@ -858,9 +695,9 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                 # Process each run
                 for run_row in runs:
                     if len(run_row) == 4:  # From device query
-                        run_id, parquet_file, binary_column, s_amplitude = run_row
+                        run_id, parquet_file, parquet_column, s_amplitude = run_row
                     else:  # From run_ids query
-                        run_id, _, parquet_file, binary_column, s_amplitude = run_row
+                        run_id, _, parquet_file, parquet_column, s_amplitude = run_row
                         
                     try:
                         # Read the Parquet file
@@ -870,16 +707,20 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                             continue
                         
                         # Read binary data
-                        table = pq.read_table(parquet_path, columns=[binary_column])
+                        table = pq.read_table(parquet_path, columns=[parquet_column])
                         df = table.to_pandas()
                         
                         # Drop NaN values to get a clean dataset
-                        binary_values = df[binary_column].dropna().values
+                        device_voltages = df[parquet_column].dropna().values
                         
-                        if len(binary_values) == 0:
+                        if len(device_voltages) == 0:
                             self.logger.warning(f"No valid binary values for run {run_id}")
                             continue
                         
+                        # Convert to binary values based on voltage threshold
+                        # Assuming device_voltages is a 1D array of voltages
+                        binary_values = device_voltages > threshold
+
                         # Calculate switching probability based on binary values and s_amplitude
                         # For positive s_amplitude, switching is when binary value is 0
                         # For negative s_amplitude, switching is when binary value is 1
