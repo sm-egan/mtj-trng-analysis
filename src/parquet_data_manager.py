@@ -730,12 +730,32 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                             self.logger.warning(f"Analog column {analog_column} not found in {parquet_file}")
                             continue
                         
+                        self.logger.info(f"CALCULATING BINARY VALUES FOR RUN {run_id} IN {parquet_file}")
                         # Convert to pandas for processing
                         df = table.to_pandas()
+                        # Compute number of NaN values in analog data
+                        self.logger.debug(f"Checking for NaN values in analog data: {df[analog_column].isna().sum()}")
                         
+                        # Create a mask of non-NaN values
+                        valid_mask = ~df[analog_column].isna()
+
+                        # Initialize binary values as NaN
+                        binary_values = pd.Series(np.nan, index=df.index)
+
+                        # Only set values where analog data is not NaN
+                        binary_values[valid_mask] = df[analog_column][valid_mask] > threshold
                         # Compute binary values (greater than threshold = 1, otherwise 0)
-                        binary_values = (df[analog_column] > threshold)
+                        #binary_values = (df[analog_column] > threshold)
                         
+                        self.logger.info(f"Number of values above threshold: {binary_values.sum()}/{len(binary_values)}")
+                        # Compute number of NaN values in binary data
+                        self.logger.debug(f"Checking for NaN values in binary data: {binary_values.isna().sum()}")
+                        
+                        if df[analog_column].isna().sum() != binary_values.isna().sum():   
+                            # If the number of NaN values is not equal, log a warning and skip run
+                            self.logger.warning(f"Unequal number of NaN values in analog and binary data for run {run_id}, skipping")
+                            continue
+
                         # Add binary column
                         df[binary_column] = binary_values
                         
