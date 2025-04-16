@@ -4,11 +4,7 @@ This repository contains tools for analyzing MTJ-TRNG experimental data from Goo
 
 ## Overview
 
-The system imports and processes experimental voltage measurements from Magnetic Tunnel Junction (MTJ) devices used for True Random Number Generation (TRNG). Data is stored in a highly optimized format using Apache Parquet files, resulting in:
-
-- >60x compression compared to raw data
-- Orders of magnitude faster numerical data retrieval
-- Column-oriented storage optimized for time-series analysis
+The system imports and processes experimental voltage measurements from Magnetic Tunnel Junction (MTJ) devices used for True Random Number Generation (TRNG). Data is stored in a highly optimized format using Apache Parquet files for high compression and fast retrieval of numerical data.
 
 ## Prerequisites
 
