@@ -34,3 +34,6 @@ temp_downloads/
 
 #Plots
 misc_plots/
+
+# Log files
+*.log
