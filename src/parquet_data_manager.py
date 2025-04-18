@@ -739,3 +739,123 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                         
                     except Exception as e:
                         self.logger.error(f"Error calculating switching probability for run {run_id}: {e}", exc_info=True)
+
+    def export_binary_file(self, measurements_df, threshold=None, device_id=None, output_path=None, hash_length=8, stacked=False):
+        """
+        Convert stacked measurements to binary values and write to a binary file
+        where each binary value is represented as a single byte (0x00 or 0x01).
+        
+        Parameters:
+        -----------
+        measurements_df : polars.DataFrame
+            DataFrame with 'device_voltage' column (output from stack_measurements)
+        threshold : float, optional
+            Voltage threshold for bit classification. If None, will be looked up 
+            from the devices table using device_id, or calculated from data.
+        device_id : str, optional
+            Device ID to look up threshold if not provided
+        output_path : str or Path, optional
+            Path to output binary file. If None, will create one based on device_id and hash
+        hash_length : int, optional
+            Number of characters from hash to use in filename (default: 8)
+            
+        Returns:
+        --------
+        Path
+            Path to the created binary file
+        """
+        import polars as pl
+        from pathlib import Path
+        import numpy as np
+        import hashlib
+        from src.analysis.processing import find_p_ap_states
+        
+        def format_count(value):
+            """Format count in simplified scientific notation without decimal points"""
+            try:
+                # Convert to integer first (since we're counting bits)
+                value = int(value)
+                
+                # Use different formats based on magnitude
+                if value < 10000:
+                    # No need for scientific notation for small numbers
+                    return str(value)
+                else:
+                    # Convert to scientific notation, removing decimal point
+                    exponent = int(np.floor(np.log10(value)))
+                    mantissa = int(round(value / 10**exponent))
+                    return f"{mantissa}e{exponent}"
+            except Exception:
+                # If formatting fails, return simple string conversion
+                return str(value)
+        
+        # Get project root and ensure bin directory exists
+        project_root = Path(__file__).parents[1]
+        output_dir = project_root / 'bin'
+        output_dir.mkdir(exist_ok=True)
+
+        if not stacked or ('run_id' not in measurements_df.columns and 'device_voltage' not in measurements_df.columns):
+            # Convert to stacked format if not already
+            measurements_df = self.stack_measurements(measurements_df)
+        
+        # Get device_id from measurements if not provided
+        if device_id is None and 'run_id' in measurements_df.columns:
+            # Try to extract device_id from the first run_id
+            run_id = measurements_df['run_id'][0]
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT device_id FROM runs WHERE run_id = ?", (run_id,))
+                result = cursor.fetchone()
+                if result:
+                    device_id = result[0]
+                    self.logger.info(f"Using device_id {device_id} from run {run_id}")
+        
+        # Determine threshold
+        if threshold is None:
+            if device_id:
+                # Look up threshold from devices table
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT threshold FROM devices WHERE device_id = ?", (device_id,))
+                    result = cursor.fetchone()
+                    if result:
+                        threshold = result[0]
+                        self.logger.info(f"Using threshold {threshold} from devices table")
+            
+            if threshold is None:
+                # Calculate threshold from the data
+                self.logger.info("Calculating threshold from data")
+                threshold, _, _ = find_p_ap_states(measurements_df)
+                self.logger.info(f"Calculated threshold: {threshold}")
+        
+        # Convert to binary values
+        self.logger.info(f"Converting {len(measurements_df)} measurements to binary using threshold {threshold}")
+        binary_values = (measurements_df['device_voltage'] > threshold).to_numpy()
+        
+        # Create bytes array (one byte per boolean)
+        bytes_data = binary_values.astype(np.uint8).tobytes()
+        
+        # Compute hash of binary data (simplified)
+        data_hash = hashlib.sha256(bytes_data).hexdigest()[:hash_length]
+        
+        # Determine output filename
+        if output_path is None:
+            count = len(binary_values)
+            # Format count in simplified scientific notation
+            count_str = format_count(count)
+            
+            if device_id:
+                filename = f"D{device_id}_{count_str}_bits_{data_hash}.bin"
+            else:
+                self.logger.error("Device ID not provided, cannot create binary file")
+                
+            output_path = output_dir / filename
+        else:
+            output_path = Path(output_path)
+        
+        # Write binary file
+        with open(output_path, 'wb') as f:
+            f.write(bytes_data)
+        
+        self.logger.info(f"Exported {len(binary_values)} binary values to {output_path}")
+        return output_path
