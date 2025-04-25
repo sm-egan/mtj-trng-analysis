@@ -37,3 +37,6 @@ misc_plots/
 
 # Log files
 *.log
+
+#txt files
+duplicate_filenames_report.txt
