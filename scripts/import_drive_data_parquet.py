@@ -8,6 +8,7 @@ import shutil
 import traceback
 import json
 import random
+from datetime import datetime
 
 # Add project root to Python path
 project_root = Path(__file__).parents[1]
@@ -33,7 +34,8 @@ def import_drive_data(folder_id,
                         file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", 
                         logging_level='INFO',
                         n_files=None,
-                        shuffle_files=False):
+                        shuffle_files=False,
+                        new_filenames_only=True):
     """Import experimental data from Google Drive to local database"""
     # Load config
     config = load_config()
@@ -90,7 +92,19 @@ def import_drive_data(folder_id,
         # Create temporary directory for downloads
         temp_dir = Path(temp_dir)
         temp_dir.mkdir(exist_ok=True)
-        
+
+        if new_filenames_only:
+            logger.info("New filenames only mode: Filtering files by filename")
+            existing_filenames = data_manager.get_existing_filenames()
+            logger.info(f"Found {len(existing_filenames)} existing filenames in database")
+
+            # Filter for only non-existing filenames
+            filtered_files = [file for file in files if file['name'] not in existing_filenames]
+            original_count = len(files)
+            skipped_count = original_count - len(filtered_files)
+            logger.info(f"Skipping {skipped_count} files that already exist in the database")
+            files = filtered_files
+
         # Process files
         imported_count = 0
         error_count = 0
@@ -100,7 +114,7 @@ def import_drive_data(folder_id,
                 # Download file
                 file_path = drive_manager.download_file(file['id'], file['folder_path'], temp_dir)
                 
-                # Import to database
+                # Import to database, skipping filename check if we already filtered
                 run_id = data_manager.import_data_file(file_path)
                 
                 if run_id:
@@ -138,7 +152,15 @@ if __name__ == "__main__":
     parser.add_argument('--logging_level', default="INFO", help='Logging level (INFO, DEBUG)')
     parser.add_argument('--n_files', default=None, help='Number of files to import, if less that full list')
     parser.add_argument('--shuffle_files', default=False, help='Option to shuffle files in list before download. Only used when n_files is also specified.')
-    
+    parser.add_argument('--import_all_files', dest='new_filenames_only', action='store_false', help='Try to import all files, even those that might be duplicates (default: False)')
+
     args = parser.parse_args()
     
-    import_drive_data(args.folder_id, args.pattern, args.logging_level, int(args.n_files) if args.n_files is not None else args.n_files, bool(args.shuffle_files))
+    import_drive_data(
+        args.folder_id, 
+        args.pattern, 
+        args.logging_level, 
+        int(args.n_files) if args.n_files is not None else args.n_files, 
+        bool(args.shuffle_files),
+        args.new_filenames_only
+    )

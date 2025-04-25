@@ -107,8 +107,6 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         params = self.parse_filename(filepath.name)
         if device_id:
             params['device_id'] = device_id
-
-        # Check if device already exists in database
         
         # Load the data file
         try:
@@ -232,6 +230,44 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         self.logger.info(f"Successfully imported run {run_id} to Parquet file {parquet_file}")
         return run_id
     
+    def get_existing_filenames(self):
+        """
+        Get a set of all filenames already in the database for efficient duplicate checking.
+        
+        Returns:
+        --------
+        set
+            Set of all filenames in the database
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT filename FROM runs WHERE filename IS NOT NULL")
+            existing_filenames = {row[0] for row in cursor.fetchall()}
+        
+        self.logger.debug(f"Found {len(existing_filenames)} existing filenames in database")
+        return existing_filenames
+    
+    def check_filename_exists(self, filename):
+        """
+        Check if a filename already exists in the database.
+        
+        Parameters:
+        -----------
+        filename : str
+            The filename to check
+            
+        Returns:
+        --------
+        bool
+            True if the filename exists, False otherwise
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM runs WHERE filename = ?", 
+                (filename,)
+            ).fetchone()
+            
+        return existing is not None
+        
     def get_measurements(self, run_id=None):
         """
         Get measurements from Parquet storage. Optimized to read multiple columns
@@ -845,7 +881,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             count_str = format_count(count)
             
             if device_id:
-                filename = f"D{device_id}_{count_str}_bits_{data_hash}.bin"
+                filename = f"D{device_id}_Samples{count_str}_1bit_{data_hash}.bin"
             else:
                 self.logger.error("Device ID not provided, cannot create binary file")
                 
