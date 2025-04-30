@@ -1,6 +1,12 @@
 # src/analysis/visualization.py
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.special import comb
+
+__all__ = [
+    'visualize_peaks_polars',
+    'plot_binomial_histogram'
+]
 
 def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, bins=100):
     """
@@ -44,3 +50,38 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
     plt.legend()
     
     return fig
+
+def plot_binomial_histogram(values, ntrials, bins=None, normalize=False, binomial_pdf=False, align='left'):
+    if normalize and np.all(values >= 1):
+        values = values / len(values)
+    if np.all(values < 1):
+        normalize = True #Set correct labels for switching probability
+    mean = np.mean(values)
+    std = np.std(values)
+
+    if not bins and not normalize:
+        bins = np.arange(np.min(values), np.max(values)+1)
+    
+    n, _, _, = plt.hist(values, bins=bins, alpha=0.7, color='blue', align='left')
+    
+    if normalize:
+        plt.title(f'Histogram of Switching Probability over {str(ntrials)} trials')
+        plt.xlabel('Switching Probability')
+    else:
+        plt.title(f'Histogram of Successful Switching attempts over {str(ntrials)} trials')
+        plt.xlabel('Successes')
+    plt.ylabel('Frequency')
+    if normalize:
+        plt.axvline(mean, color='r', linestyle='dashed', linewidth=1, label=f'Mean = {mean:.3f}%')
+        plt.axvspan(mean - std, mean + std, color='r', alpha=0.2, label=f'Std = {std:.3f}%')
+    else:
+        plt.axvline(mean, color='r', linestyle='dashed', linewidth=1, label=f'Mean = {mean:.3f}')
+        plt.axvspan(mean - std, mean + std, color='r', alpha=0.2, label=f'Std = {std:.3f}')
+
+    if binomial_pdf:
+        prefactor = comb(ntrials, bins)
+        pdf = prefactor * (np.power(mean / ntrials, bins) * np.power(1 - mean / ntrials, ntrials - bins))
+        plt.plot(bins, pdf * np.sum(n), 'k-.', label='Binomial distribution')
+
+    plt.legend()
+    plt.show()
