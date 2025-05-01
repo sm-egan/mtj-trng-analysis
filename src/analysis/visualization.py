@@ -65,10 +65,10 @@ def plot_binomial_histogram(values, ntrials, bins=None, normalize=False, binomia
     n, _, _, = plt.hist(values, bins=bins, alpha=0.7, color='blue', align='left')
     
     if normalize:
-        plt.title(f'Histogram of Switching Probability over {str(ntrials)} trials')
-        plt.xlabel('Switching Probability')
+        plt.title(f'Histogram of switching probability over {str(ntrials)} trials')
+        plt.xlabel('Switching probability')
     else:
-        plt.title(f'Histogram of Successful Switching attempts over {str(ntrials)} trials')
+        plt.title(f'Histogram of successful switching attempts over {str(ntrials)} trials')
         plt.xlabel('Successes')
     plt.ylabel('Frequency')
     if normalize:

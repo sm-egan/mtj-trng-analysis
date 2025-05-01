@@ -28,7 +28,6 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force recalculation even if data exists")
     parser.add_argument("--device", help="Process only the specified device ID")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
     args = parser.parse_args()
 
     # Setup logging
