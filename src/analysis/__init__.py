@@ -6,4 +6,5 @@ __all__ = [
     'calculate_switching_probability',
     'visualize_peaks_polars',
     'plot_binomial_histogram',
+    'plot_switching_scatter',
 ]

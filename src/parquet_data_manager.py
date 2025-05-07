@@ -776,15 +776,17 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                     except Exception as e:
                         self.logger.error(f"Error calculating switching probability for run {run_id}: {e}", exc_info=True)
 
-    def export_binary_file(self, measurements_df, threshold=None, device_id=None, output_path=None, hash_length=8, stacked=False):
+    def export_binary_file(self, measurements_df=None, binary_values=None, threshold=None, device_id=None, output_path=None, hash_length=8, stacked=False):
         """
-        Convert stacked measurements to binary values and write to a binary file
+        Convert stacked measurements to binary values (if needed) and write to a binary file
         where each binary value is represented as a single byte (0x00 or 0x01).
         
         Parameters:
         -----------
         measurements_df : polars.DataFrame
             DataFrame with 'device_voltage' column (output from stack_measurements)
+        binary_values : numpy.ndarray
+            numpy array with binary values stored as uint8 datatype. Allows you to bypass DataFrame operations and database lookups
         threshold : float, optional
             Voltage threshold for bit classification. If None, will be looked up 
             from the devices table using device_id, or calculated from data.
@@ -830,43 +832,53 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         output_dir = project_root / 'bin'
         output_dir.mkdir(exist_ok=True)
 
-        if not stacked or ('run_id' not in measurements_df.columns and 'device_voltage' not in measurements_df.columns):
-            # Convert to stacked format if not already
-            measurements_df = self.stack_measurements(measurements_df)
-        
-        # Get device_id from measurements if not provided
-        if device_id is None and 'run_id' in measurements_df.columns:
-            # Try to extract device_id from the first run_id
-            run_id = measurements_df['run_id'][0]
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT device_id FROM runs WHERE run_id = ?", (run_id,))
-                result = cursor.fetchone()
-                if result:
-                    device_id = result[0]
-                    self.logger.info(f"Using device_id {device_id} from run {run_id}")
-        
-        # Determine threshold
-        if threshold is None:
-            if device_id:
-                # Look up threshold from devices table
+        if measurements_df is not None and binary_values is None:
+            if not stacked or ('run_id' not in measurements_df.columns and 'device_voltage' not in measurements_df.columns):
+                # Convert to stacked format if not already
+                measurements_df = self.stack_measurements(measurements_df)
+            
+            # Get device_id from measurements if not provided
+            if device_id is None and 'run_id' in measurements_df.columns:
+                # Try to extract device_id from the first run_id
+                run_id = measurements_df['run_id'][0]
                 with sqlite3.connect(self.db_path) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT threshold FROM devices WHERE device_id = ?", (device_id,))
+                    cursor.execute("SELECT device_id FROM runs WHERE run_id = ?", (run_id,))
                     result = cursor.fetchone()
                     if result:
-                        threshold = result[0]
-                        self.logger.info(f"Using threshold {threshold} from devices table")
+                        device_id = result[0]
+                        self.logger.info(f"Using device_id {device_id} from run {run_id}")
             
+            # Determine threshold
             if threshold is None:
-                # Calculate threshold from the data
-                self.logger.info("Calculating threshold from data")
-                threshold, _, _ = find_p_ap_states(measurements_df)
-                self.logger.info(f"Calculated threshold: {threshold}")
-        
-        # Convert to binary values
-        self.logger.info(f"Converting {len(measurements_df)} measurements to binary using threshold {threshold}")
-        binary_values = (measurements_df['device_voltage'] > threshold).to_numpy()
+                if device_id:
+                    # Look up threshold from devices table
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT threshold FROM devices WHERE device_id = ?", (device_id,))
+                        result = cursor.fetchone()
+                        if result:
+                            threshold = result[0]
+                            self.logger.info(f"Using threshold {threshold} from devices table")
+                
+                if threshold is None:
+                    # Calculate threshold from the data
+                    self.logger.info("Calculating threshold from data")
+                    threshold, _, _ = find_p_ap_states(measurements_df)
+                    self.logger.info(f"Calculated threshold: {threshold}")
+            
+            # Convert to binary values
+            self.logger.info(f"Converting {len(measurements_df)} measurements to binary using threshold {threshold}")
+            binary_values = (measurements_df['device_voltage'] > threshold).to_numpy()
+
+        elif binary_values is not None and measurements_df is None:
+            if binary_values.dtype == np.uint8:
+                print('Directly passing binary values to ParquetExperimentalDataManager.export_binary_files()')
+            else:
+                self.logger.error('Incorrect datatype for binary_values')
+
+        else:
+            self.logger.error('Please specify only measurements_df OR binary_values')
         
         # Create bytes array (one byte per boolean)
         bytes_data = binary_values.astype(np.uint8).tobytes()
