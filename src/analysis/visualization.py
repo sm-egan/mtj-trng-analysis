@@ -51,7 +51,7 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
     
     return fig
 
-def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, binomial_pdf=False, align='left'):
+def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, binomial_pdf=True, align='left'):
     if plot_probabilities and np.all(values >= 1):
         values = values / len(values)
     if np.all(values < 1):
@@ -92,6 +92,10 @@ def plot_switching_scatter(data, ntrials, title = None):
     '''
 
     '''
+    if data.dtype == np.uint8:
+        # If data is just an array of binary values (0's and 1's), convert to switching probability
+        nsubsets = int(len(data) / ntrials)
+        data = np.sum(data[0:len(data) * ntrials].reshape((nsubsets, ntrials)), axis = 1) / ntrials
 
     sp_mean = np.mean(data)
     sp_std = np.std(data)

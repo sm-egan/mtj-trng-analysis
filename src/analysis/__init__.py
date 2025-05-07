@@ -7,4 +7,5 @@ __all__ = [
     'visualize_peaks_polars',
     'plot_binomial_histogram',
     'plot_switching_scatter',
+    'xorn_whitening',
 ]
