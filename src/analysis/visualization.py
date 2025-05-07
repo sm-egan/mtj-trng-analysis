@@ -51,7 +51,7 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
     
     return fig
 
-def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, binomial_pdf=True, align='left'):
+def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, binomial_pdf=True, align='left', title=None):
     if plot_probabilities and np.all(values >= 1):
         values = values / len(values)
     if np.all(values < 1):
@@ -66,16 +66,21 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     n, _, _, = plt.hist(values, bins=bins, alpha=0.7, color='blue', align='left')
     
     if plot_probabilities:
-        plt.title(f'Histogram of switching probability over {str(ntrials)} trials')
+        if title is None:
+            plt.title(f'Histogram of switching probability over {str(ntrials)} trials')
         plt.xlabel('Switching probability')
         plt.axvline(mean, color='r', linestyle='dashed', linewidth=1, label=f'Mean = {mean:.3f}%')
         plt.axvspan(mean - std, mean + std, color='r', alpha=0.2, label=f'Std = {std:.3f}%')
     else:
-        plt.title(f'Histogram of successful switching attempts over {str(ntrials)} trials')
+        if title is None:
+            plt.title(f'Histogram of successful switching attempts over {str(ntrials)} trials')
         plt.xlabel('Successes')
         plt.axvline(mean, color='r', linestyle='dashed', linewidth=1, label=f'Mean = {mean:.3f}')
         plt.axvspan(mean - std, mean + std, color='r', alpha=0.2, label=f'Std = {std:.3f}')
     
+    if title is not None:
+        plt.title(title)
+
     plt.ylabel('Frequency')
 
     if binomial_pdf:
@@ -88,7 +93,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     plt.legend()
     plt.show()
 
-def plot_switching_scatter(data, ntrials, title = None):
+def plot_switching_scatter(data, ntrials, markersize=None, title=None):
     '''
 
     '''
@@ -108,7 +113,8 @@ def plot_switching_scatter(data, ntrials, title = None):
     expected_std = np.sqrt(sp_mean * (1 - sp_mean) / ntrials)
 
     x = np.arange(len(data)) * ntrials
-    markersize = -3e-4 * len(data) + 5 # set markersize based on the number of data points
+    if markersize is None:
+        markersize = -3e-4 * len(data) + 5 # set markersize based on the number of data points
     
 
     print(f"Mean switching probability: {sp_mean:.5f} +/- {sp_std:.5f}")
@@ -131,6 +137,8 @@ def plot_switching_scatter(data, ntrials, title = None):
             plt.title(f'Switching probability over {str(int(ntrials))} trials')
         else:
             plt.title(f"Number of successes over {str(int(ntrials))} trials")
+    else:
+        plt.title(title)
 
     plt.legend()
     fig.show()
