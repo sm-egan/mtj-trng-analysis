@@ -130,23 +130,20 @@ def calculate_switching_probability(measurements, threshold=None, group_by=None)
         return result
 
 def xorn_whitening(binary_data, n=2, verbose=False):
-    print(f'Performing XOR{n} whitening')
+    L = len(binary_data)
 
-    xor_sum = 0
+    if not (L / n).is_integer():
+        binary_data = binary_data[0:int(L / n) * n]
+    
+    xorn = np.sum(binary_data.reshape(int(L / n), n),  axis=1) % 2
 
     if verbose:
-        print('Input data:')
+        print(f'Performing XOR{n} whitening')
+        print('Input:')
         print(binary_data[0:10 * n])
-        print('\n\n')
-    
-    print('Output data:')
-    for i in range(n):
-        input = data[i::n]
-        xor_sum += input
+        print('\n\nOutput:')
 
-        print(input[0:10])
+        print('---------------------')
+        print(xorn[0:10])
 
-    xor8 = xor_sum % 2
-
-    print('---------------------')
-    print(xor8[0:10])
+    return xorn.astype(np.uint8)

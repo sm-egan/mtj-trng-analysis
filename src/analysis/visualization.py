@@ -46,7 +46,7 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
     plt.axvline(peaks[1], color='g', linestyle='-', label=f'Peak 2: {peaks[1]:.6f}V')
     plt.xlabel('Voltage')
     plt.ylabel('Frequency')
-    plt.title('MTJ Device Voltage Distribution')
+    #plt.title('MTJ Device Voltage Distribution')
     plt.legend()
     
     return fig
@@ -62,9 +62,14 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
 
     if not bins and not plot_probabilities:
         bins = np.arange(np.min(values), np.max(values)+1)
+
+    if binomial_pdf:
+        density = True
+    else:
+        density = False
     
-    n, _, _, = plt.hist(values, bins=bins, alpha=0.7, color='blue', align='left')
-    
+    n, _, _, = plt.hist(values, bins=bins, alpha=0.7, color='blue', align='left', density=density)
+        
     if plot_probabilities:
         if title is None:
             plt.title(f'Histogram of switching probability over {str(ntrials)} trials')
@@ -87,7 +92,9 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
         if plot_probabilities:
             bins = bins / ntrials
         prefactor = comb(ntrials, bins)
-        pdf = prefactor * (np.power(mean / ntrials, bins) * np.power(1 - mean / ntrials, ntrials - bins))
+        p = mean / ntrials
+        #p = 0.5
+        pdf = prefactor * (np.power(p, bins) * np.power(1 - p, ntrials - bins))
         plt.plot(bins, pdf * np.sum(n), 'k-.', label='Binomial distribution')
 
     plt.legend()
@@ -141,6 +148,6 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None):
         plt.title(title)
 
     plt.legend()
-    fig.show()
+    plt.show()
 
     print(f"Markersize = {markersize}")
