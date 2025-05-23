@@ -776,7 +776,7 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
                     except Exception as e:
                         self.logger.error(f"Error calculating switching probability for run {run_id}: {e}", exc_info=True)
 
-    def export_binary_file(self, measurements_df=None, binary_values=None, threshold=None, device_id=None, output_path=None, hash_length=8, stacked=False):
+    def export_binary_file(self, measurements_df=None, binary_values=None, threshold=None, device_id=None, output_path=None, hash_length=8, stacked=False, restart_test=False, custom_prefix=""):
         """
         Convert stacked measurements to binary values (if needed) and write to a binary file
         where each binary value is represented as a single byte (0x00 or 0x01).
@@ -880,11 +880,22 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         else:
             self.logger.error('Please specify only measurements_df OR binary_values')
         
-        # Create bytes array (one byte per boolean)
+        # Store original count and compute hash of FULL dataset
+        original_count = len(binary_values)
+        full_bytes_data = binary_values.astype(np.uint8).tobytes()
+        data_hash = hashlib.sha256(full_bytes_data).hexdigest()[:hash_length]
+
+        # For restart testing, truncate to exactly 1 million samples
+        if restart_test:
+            if original_count < 1_000_000:
+                self.logger.error(f"Restart test requires at least 1,000,000 samples, but only {original_count} available")
+                raise ValueError("Insufficient samples for restart test")
+            
+            self.logger.info(f"Truncating from {original_count} to 1,000,000 samples for restart test")
+            binary_values = binary_values[:1_000_000]
+    
+        # Create bytes array for writing (may be truncated)
         bytes_data = binary_values.astype(np.uint8).tobytes()
-        
-        # Compute hash of binary data (simplified)
-        data_hash = hashlib.sha256(bytes_data).hexdigest()[:hash_length]
         
         # Determine output filename
         if output_path is None:
@@ -893,7 +904,11 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             count_str = format_count(count)
             
             if device_id:
-                filename = f"D{device_id}_Samples{count_str}_1bit_{data_hash}.bin"
+                # Add restart prefix if this is a restart test
+                prefix = "restart_" if restart_test else ""
+                if len(custom_prefix) > 0:
+                    prefix = prefix + custom_prefix + "_"
+                filename = f"{prefix}D{device_id}_Samples{count_str}_1bit_{data_hash}.bin"
             else:
                 self.logger.error("Device ID not provided, cannot create binary file")
                 
@@ -905,5 +920,10 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         with open(output_path, 'wb') as f:
             f.write(bytes_data)
         
-        self.logger.info(f"Exported {len(binary_values)} binary values to {output_path}")
+        if restart_test:
+            self.logger.info(f"Exported {len(binary_values)} binary values (truncated from {original_count}) to {output_path}")
+            self.logger.info(f"Hash computed from full dataset of {original_count} samples")
+        else:
+            self.logger.info(f"Exported {len(binary_values)} binary values to {output_path}")
+
         return output_path
