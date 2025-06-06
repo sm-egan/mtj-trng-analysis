@@ -307,7 +307,15 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
             if not runs_info:
                 return empty_df
             
-            return self._read_multiple_runs_from_parquet(runs_info)
+            df = self._read_multiple_runs_from_parquet(runs_info)
+
+            # Reorder columns to match original run_ids order
+            available_columns = [col for col in run_ids if col in df.columns]
+            if available_columns:
+                df = df.select(available_columns)
+
+            return df
+            #return self._read_multiple_runs_from_parquet(runs_info)
         
         # Invalid run_id type
         self.logger.error(f"Invalid run_id type: {type(run_id)}")
@@ -366,6 +374,18 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         """
         Read measurements for multiple runs, optimized to read columns from the
         same Parquet file in a single operation.
+
+        CURRENT ASSUMPTION: All requested run_ids are expected to be in the same 
+        Parquet file. If run_ids span multiple files, only the first file will 
+        be processed and subsequent files will be silently ignored.
+        
+        This assumption holds because runs are currently grouped by device into 
+        separate Parquet files, and typical usage patterns request runs from 
+        the same device at once.
+        
+        TODO: If future usage requires reading from multiple Parquet files in 
+        a single call, this function should be modified to collect and concatenate 
+        DataFrames from all files in parquet_info.
         
         Parameters:
         -----------
@@ -383,7 +403,16 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         if not parquet_info:
             empty_df
 
-        # Loop over each each Parquet file and the list of (run_id, column) tuples for each one
+        # Warn if multiple Parquet files detected (unexpected usage pattern)
+        if len(parquet_info) > 1:
+            parquet_files = list(parquet_info.keys())
+            self.logger.warning(
+                f"Multiple Parquet files detected in single call: {parquet_files}. "
+                f"Only the first file will be processed. Consider calling get_measurements "
+                f"separately for each device/Parquet file."
+            )
+            
+        # Loop over each Parquet file and the list of (run_id, column) tuples for each one
         for parquet_path, run_info in parquet_info.items():
             try:
                 # Get all column names to read from this file as a list

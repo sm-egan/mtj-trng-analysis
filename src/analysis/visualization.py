@@ -11,12 +11,15 @@ __all__ = [
 ]
 
 def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, 
-                          binomial_pdf=True, align='left', title=None, ax=None):
+                          binomial_pdf=True, align='left', title=None, ax=None, 
+                          fontsize=14, hide_ylabel=False):
     """
     Plot histogram of binomial data with optional binomial PDF overlay.
     
     Args:
         ax: matplotlib Axes object. If None, creates new figure.
+        fontsize: Font size for labels and legends
+        hide_ylabel: If True, don't show y-axis label (useful for subplots)
         Other args same as before...
     
     Returns:
@@ -49,25 +52,28 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     # Set labels and title
     if plot_probabilities:
         if title is None:
-            ax.set_title(f'Histogram of switching probability over {str(ntrials)} trials')
-        ax.set_xlabel('Switching probability')
+            ax.set_title(f'Histogram of switching probability over {str(ntrials)} trials', 
+                        fontsize=fontsize)
+        ax.set_xlabel('Switching probability', fontsize=fontsize)
         ax.axvline(mean, color='r', linestyle='dashed', linewidth=1, 
                    label=f'Mean = {mean:.3f}')
         ax.axvspan(mean - std, mean + std, color='r', alpha=0.2, 
                    label=f'Std = {std:.3f}')
     else:
         if title is None:
-            ax.set_title(f'Histogram of successful switching attempts over {str(ntrials)} trials')
-        ax.set_xlabel('Successes')
-        ax.axvline(mean, color='r', linestyle='dashed', linewidth=1, 
+            ax.set_title(f'Histogram of successful switching attempts over {str(ntrials)} trials',
+                        fontsize=fontsize)
+        ax.set_xlabel('Successes', fontsize=fontsize)
+        ax.axvline(mean, color='r', linestyle='dashed', linewidth=3, 
                    label=f'Mean = {mean:.3f}')
         ax.axvspan(mean - std, mean + std, color='r', alpha=0.2, 
                    label=f'Std = {std:.3f}')
     
     if title is not None:
-        ax.set_title(title)
+        ax.set_title(title, fontsize=fontsize)
     
-    ax.set_ylabel('Frequency')
+    if not hide_ylabel:
+        ax.set_ylabel('Frequency', fontsize=fontsize)
     
     # Add binomial PDF if requested
     if binomial_pdf:
@@ -81,9 +87,13 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             p = mean / ntrials if not plot_probabilities else mean
             pdf = prefactor * (np.power(p, bins_for_pdf) * np.power(1 - p, ntrials - bins_for_pdf))
             ax.plot(bins_for_pdf if plot_probabilities else bins, pdf * np.sum(n), 
-                    'k-.', label=f'Binomial distribution\nn={ntrials}, p={p:.3f}')
+                    'k-.', label=f'Binomial pdf: n={ntrials}, p={p:.3f}', linewidth=5)
     
-    ax.legend()
+    # Legend on plot
+    ax.legend(fontsize=fontsize-4, loc='upper left')
+    # Legend above plot
+    #ax.legend(fontsize=fontsize-4, bbox_to_anchor=(0.5, 1.02), loc='lower center', ncol=1)
+    ax.tick_params(axis='both', which='major', labelsize=fontsize-2)
     
     if show_plot:
         plt.show()
@@ -91,12 +101,16 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     return fig, ax
 
 
-def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None):
+def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
+                         fontsize=14, hide_ylabel=False, verbose=True):
     """
     Plot switching probability scatter plot over trials.
     
     Args:
         ax: matplotlib Axes object. If None, creates new figure.
+        fontsize: Font size for labels and legends
+        hide_ylabel: If True, don't show y-axis label (useful for subplots)
+        verbose: If True, print statistics to console
         Other args same as before...
     
     Returns:
@@ -125,42 +139,52 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None):
         p = sp_mean / ntrials
     expected_std = np.sqrt(sp_mean * (1 - sp_mean) / ntrials)
     
-    x = np.arange(len(data)) * ntrials
-    if markersize is None:
-        markersize = max(1, -3e-4 * len(data) + 5)
+    x = np.arange(len(data)) * ntrials / 1_000_000
     
-    # Print statistics (consider making this optional)
-    print(f"Mean switching probability: {sp_mean:.5f} +/- {sp_std:.5f}")
-    print(f"Median switching probability: {sp_median:.5f}")
-    print(f"Expected standard deviation: {expected_std:.5f}")
-    print(f"Markersize = {markersize}")
+    # Smart markersize calculation based on data density
+    if markersize is None:
+        # Base size on number of points, but keep reasonable bounds
+        base_size = max(0.5, min(8, -2e-4 * len(data) + 4))
+        markersize = base_size
+    
+    # Print statistics (optional)
+    if verbose:
+        print(f"Mean switching probability: {sp_mean:.5f} +/- {sp_std:.5f}")
+        print(f"Median switching probability: {sp_median:.5f}")
+        print(f"Expected standard deviation: {expected_std:.5f}")
+        print(f"Markersize = {markersize}")
     
     # Create plot
-    ax.plot(x, data, 'o', markersize=markersize)
-    ax.set_xlabel('Trial Number')
+    ax.plot(x, data, 'bo', markersize=markersize)
+    ax.set_xlabel('Trial Number (millions)', fontsize=fontsize)
     
     if np.all(data < 1):
         ax.hlines(sp_mean, 0, np.max(x), colors='r', linestyles='dashed', 
                   label=f"Mean = {sp_mean*100:.2f}%")
         ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1, 
                    label=f"Std = {sp_std*100:.2f}%")
-        ax.set_ylabel('Switching Probability')
+        if not hide_ylabel:
+            ax.set_ylabel('Switching Probability', fontsize=fontsize)
     else:
         ax.hlines(sp_mean, 0, np.max(x), colors='r', linestyles='dashed', 
-                  label=f"Mean = {sp_mean:.1f}")
+                  label=f"Mean = {sp_mean:.1f}", linewidth=5)
         ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1, 
                    label=f"Std = {sp_std:.1f}")
-        ax.set_ylabel('Number of successes')
+        if not hide_ylabel:
+            ax.set_ylabel('Successes', fontsize=fontsize)
     
     if title is None:
         if np.all(data < 1):
-            ax.set_title(f'Switching probability over {str(int(ntrials))} trials')
+            ax.set_title(f'Switching probability over {str(int(ntrials))} trials',
+                        fontsize=fontsize)
         else:
-            ax.set_title(f"Number of successes over {str(int(ntrials))} trials")
+            ax.set_title(f"Number of successes over {str(int(ntrials))} trials",
+                        fontsize=fontsize)
     else:
-        ax.set_title(title)
+        ax.set_title(title, fontsize=fontsize)
     
-    ax.legend()
+    ax.legend(fontsize=fontsize-2)
+    ax.tick_params(axis='both', which='major', labelsize=fontsize-2)
     
     if show_plot:
         plt.show()
@@ -169,35 +193,46 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None):
 
 
 def plot_comparison_subplots(data1, data2, ntrials, plot_type='histogram', 
-                           titles=None, figsize=(12, 10), **kwargs):
+                           titles=None, figsize=(12, 10), sharey=True, 
+                           fontsize=14, **kwargs):
     """
     Convenience function to plot two datasets in vertically aligned subplots.
     
     Args:
         data1, data2: Data arrays for top and bottom plots
         ntrials: Number of trials for both datasets
-        plot_type: 'histogram', 'scatter'
+        plot_type: 'histogram' or 'scatter'
         titles: List of titles for subplots [top_title, bottom_title]
         figsize: Figure size tuple
+        sharey: Bool, whether to share y-axis between subplots (default True)
+        fontsize: Font size for labels and legends
         **kwargs: Additional arguments passed to plotting functions
     
     Returns:
         tuple: (fig, axes) where axes is [ax1, ax2] for top and bottom
     """
-        
+    
     if plot_type == 'histogram':
         fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+        # Left plot - keep y-label
         plot_binomial_histogram(data1, ntrials, ax=axes[0], 
-                              title=titles[0] if titles else None, **kwargs)
+                              title=titles[0] if titles else None, 
+                              fontsize=fontsize, hide_ylabel=False, **kwargs)
+        # Right plot - hide y-label since it's shared
         plot_binomial_histogram(data2, ntrials, ax=axes[1], 
-                              title=titles[1] if titles else None, **kwargs)
+                              title=titles[1] if titles else None, 
+                              fontsize=fontsize, hide_ylabel=True, **kwargs)
         
     elif plot_type == 'scatter':
         fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+        # Left plot - keep y-label
         plot_switching_scatter(data1, ntrials, ax=axes[0], 
-                             title=titles[0] if titles else None, **kwargs)
+                             title=titles[0] if titles else None, 
+                             fontsize=fontsize, hide_ylabel=False, **kwargs)
+        # Right plot - hide y-label since it's shared
         plot_switching_scatter(data2, ntrials, ax=axes[1], 
-                             title=titles[1] if titles else None, **kwargs)
+                             title=titles[1] if titles else None, 
+                             fontsize=fontsize, hide_ylabel=True, **kwargs)
     
     plt.tight_layout()
     return fig, axes
