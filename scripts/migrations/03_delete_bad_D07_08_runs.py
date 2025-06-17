@@ -37,7 +37,7 @@ def identify_bad_runs(db_path):
         query = """
         SELECT run_id, device_id, row_number, r_amplitude, parquet_file, parquet_column, filename
         FROM runs 
-        WHERE device_id = 'D07_08' 
+        WHERE device_id = '07_08' 
         AND (row_number > 1167 OR r_amplitude = -1.1)
         ORDER BY row_number, r_amplitude
         """
