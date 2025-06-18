@@ -51,7 +51,7 @@ class EntropyEvaluationPipeline:
                         run_ids: Optional[List[str]] = None,
                         xor_levels: List[int] = [1, 2, 4, 8],
                         skip_existing: bool = True,
-                        tests: List[str] = ['iid', 'non_iid']):
+                        tests: List[str] = ['non_iid', 'iid']):
         """
         Evaluate entropy for a specific device
         
@@ -71,7 +71,7 @@ class EntropyEvaluationPipeline:
             )
         """
         # Get binary data
-        binary_data, raw_hash, sp = self.get_binary_data(device_id, polars_expr, run_ids)
+        binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
         if binary_data is None:
             self.logger.warning("No data found matching criteria")
             return
@@ -79,26 +79,56 @@ class EntropyEvaluationPipeline:
         self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
         
         # Process each XOR level
-        for xor_n in xor_levels:
-            if xor_n == 1:
-                processed_data = binary_data
-                process_name = "raw"
-            else:
-                self.logger.info(f"Applying XOR-{xor_n} whitening")
-                processed_data = xorn_whitening(binary_data, n=xor_n)
-                process_name = f"xor{xor_n}"
+        # for xor_n in xor_levels:
+        #     if xor_n == 1:
+        #         processed_data = binary_data
+        #         process_name = "raw"
+        #     else:
+        #         self.logger.info(f"Applying XOR-{xor_n} whitening")
+        #         processed_data = xorn_whitening(binary_data, n=xor_n)
+        #         process_name = f"xor{xor_n}"
             
-            # Export binary file
-            bin_file = self.export_binary(device_id, process_name, processed_data, 
-                                         raw_hash, skip_existing)
+        #     # Export binary file
+        #     bin_file = self.export_binary(device_id, process_name, processed_data, 
+        #                                  raw_hash, skip_existing)
             
-            # Run tests
-            for test in tests:
+        #     # Run tests
+        #     for test in tests:
+        #         self.run_test(device_id, process_name, bin_file, raw_hash, 
+        #                      test, skip_existing)
+
+        # Set test as outer loop, since non-iid tests runs much faster you don't have to wait for results
+        for test in tests:
+            for xor_n in xor_levels:                
+                if xor_n == 1:
+                    process_name = "raw"
+                else:
+                    process_name = f"xor{xor_n}"
+
+                # Kind of hacky/repetitive with export_binary, fix later. Construct bin_file the same way as export_binary in order to check if the target file already exists
+                ## Added this when I reversed order of test and xor loop
+                bin_dir = self.output_base / device_id / process_name            
+                bin_file = bin_dir / f"{raw_hash}.bin"
+
+                if not (bin_file.exists() and skip_existing):
+                    if process_name == "raw":
+                        processed_data = binary_data
+                    else:
+                        self.logger.info(f"Applying XOR-{xor_n} whitening")
+                        processed_data = xorn_whitening(binary_data, n=xor_n)
+
+                    # Export binary file
+                    bin_file = self.export_binary(device_id, process_name, processed_data, 
+                                                 raw_hash, skip_existing)
+
                 self.run_test(device_id, process_name, bin_file, raw_hash, 
-                             test, skip_existing)
+                                 test, skip_existing, metadata_str)
+
+
     
     def get_binary_data(self, device_id: str, polars_expr: Optional[pl.Expr], 
-                        run_ids: Optional[List[str]]) -> Tuple[Optional[np.ndarray], str, float]:
+                        run_ids: Optional[List[str]], 
+                        group_by: Optional[list] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]) -> Tuple[Optional[np.ndarray], str, float, str]:
         """
         Get binary data from runs for a specific device
         
@@ -120,7 +150,17 @@ class EntropyEvaluationPipeline:
             with sqlite3.connect(self.dm.db_path) as conn:
                 runs_df = pl.read_database("SELECT * FROM runs", conn)
             
+            # Sorting by row_number extremely important for preserving sequential order of bits
+            ## Otherwise entropy may be over-estimated
             df = runs_df.filter(device_filter).sort("row_number")
+
+            df_group_by = df.group_by(group_by, maintain_order=True)
+            if df_group_by.len().height > 1:
+                self.logger.warning("Combining runs with different pulse/field parameters in binary data")
+            metadata_str = str(tuple(group_by))
+            for name, data in df_group_by:
+                metadata_str += f"\n{name}"
+
             
             if len(df) == 0:
                 self.logger.warning(f"No runs found for device {device_id} matching expression")
@@ -156,7 +196,7 @@ class EntropyEvaluationPipeline:
         raw_hash = hashlib.sha256(binary_data.tobytes()).hexdigest()
         switching_probability = np.mean(binary_data)
         
-        return binary_data, raw_hash, switching_probability
+        return binary_data, raw_hash, switching_probability, metadata_str
     
     def export_binary(self, device_id, process_name, data, raw_hash, skip_existing):
         """Export binary data to file"""
@@ -172,7 +212,7 @@ class EntropyEvaluationPipeline:
         
         return bin_file
     
-    def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing):
+    def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
         """Run entropy test and save results"""
         # Setup
         results_dir = self.results_base / device_id / process_name / test_type
@@ -191,20 +231,8 @@ class EntropyEvaluationPipeline:
         
         try:
             start_time = datetime.now()
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
             duration = (datetime.now() - start_time).total_seconds()
-            
-            # Save results
-            # with open(results_file, 'w') as f:
-            #     f.write(f"Command: {' '.join(cmd)}\n")
-            #     f.write(f"Duration: {duration:.2f} seconds\n")
-            #     f.write(f"Return code: {result.returncode}\n")
-            #     f.write("="*80 + "\n")
-            #     f.write(result.stdout)
-            #     if result.stderr:
-            #         f.write("\n" + "="*80 + "\n")
-            #         f.write("STDERR:\n")
-            #         f.write(result.stderr)
 
             # Filter out redundant progress lines
             lines = result.stdout.split('\n')
@@ -233,6 +261,7 @@ class EntropyEvaluationPipeline:
                 f.write(f"Command: {' '.join(cmd)}\n")
                 f.write(f"Duration: {duration:.2f} seconds\n")
                 f.write(f"Return code: {result.returncode}\n")
+                f.write(f"{metadata_str}\n")
                 f.write("="*80 + "\n")
                 f.write(filtered_output)  # <-- Changed from result.stdout
                 if result.stderr:
@@ -243,20 +272,15 @@ class EntropyEvaluationPipeline:
             self.logger.info(f"Test completed in {duration:.2f}s")
             
             # Log key results
-            if test_type == 'iid' and 'H_original:' in result.stdout:
+            ## if test is non_iid or iid. Does not cover restart for now
+            if 'iid' in test_type and 'H_original:' in result.stdout:
                 h = result.stdout.split('H_original: ')[1].split('\n')[0]
                 self.logger.info(f"  H_original: {h}")
-            elif test_type == 'non_iid':
-                for pattern in ['min(H_r, H_c):', 'min(H_r, H_c, H_I):']:
-                    if pattern in result.stdout:
-                        h = result.stdout.split(pattern)[1].split('\n')[0]
-                        self.logger.info(f"  Min entropy: {h}")
-                        break
                         
         except subprocess.TimeoutExpired:
-            self.logger.error(f"Test timed out after 30 minutes")
+            self.logger.error(f"Test timed out after 120 minutes")
             with open(results_file, 'w') as f:
-                f.write("ERROR: Test timed out after 30 minutes\n")
+                f.write("ERROR: Test timed out after 120 minutes\n")
 
 
 # Example usage
@@ -269,12 +293,23 @@ if __name__ == "__main__":
         ea_binaries_path="/Users/shannonegan/Documents/DSV/StochastIQ/umn/SP800-90B_EntropyAssessment/cpp"
     )
     
-    # Process a device
-    pipeline.evaluate_entropy(
-        device_id="07_08",
-        polars_expr=(pl.col("s_amplitude") == 4.73) & (pl.col("s_width") == 4e-9) & (pl.col("row_number").is_between(252,268)),
-        xor_levels=[4, 8]
-    )
+    #Process a device
+    for s_width_ns in np.arange(2,8,1):
+
+        pipeline.evaluate_entropy(
+            device_id="07_08",
+            polars_expr=(pl.col("s_amplitude") == 4.73) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 319),
+            tests=['non_iid'],
+            skip_existing=False,
+        )
+
+    # pipeline.evaluate_entropy(
+    #     device_id="023_07",
+    #     polars_expr=(pl.col("row_number") == 290),
+    #     xor_levels=[8,4,2,1],
+    #     skip_existing=False,
+    #     tests=['non_iid', 'iid']
+    # )
     
     # Process with specific run IDs (fast path)
     # pipeline.evaluate_entropy(

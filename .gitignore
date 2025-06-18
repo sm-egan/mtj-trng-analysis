@@ -33,7 +33,7 @@ database/
 temp_downloads/
 bin/
 
-#Plots
+# Plots
 misc_plots/
 
 # Log files
@@ -41,3 +41,9 @@ misc_plots/
 
 #txt files
 duplicate_filenames_report.txt
+
+# Notebooks
+notebooks/prng.ipynb
+
+# Entropy source validation results
+esv/
