@@ -73,43 +73,57 @@ class GoogleDriveManager:
             matching_files = []
             
             try:
-                results = self.service.files().list(
-                    q=f"'{folder_id}' in parents",
-                    fields="files(id, name, mimeType)",
-                    supportsAllDrives=True,
-                    includeItemsFromAllDrives=True
-                ).execute()
-
-                # Add this right after the files().list() call:
-                items = results.get('files', [])
-                self.logger.debug(f"Found {len(items)} items in folder: {current_path or 'root'}")
-
-                # Count just the .txt files in this directory
-                txt_files = [item for item in items if item['name'].endswith('.txt')]
-                self.logger.debug(f"{len(txt_files)} .txt files in this directory")
-                
-                items = results.get('files', [])
-                
-                for item in items:
-                    # If it's a folder, recurse
-                    if item['mimeType'] == 'application/vnd.google-apps.folder':
-                        folder_name = item['name']
-                        new_path = f"{current_path}/{folder_name}" if current_path else folder_name
-                        matching_files.extend(explore_folder(item['id'], new_path))
+                # Handle pagination to get ALL files
+                page_token = None
+                while True:
+                    # Build request with proper pageSize and pagination
+                    request_params = {
+                        'q': f"'{folder_id}' in parents",
+                        'fields': "nextPageToken, files(id, name, mimeType)",
+                        'supportsAllDrives': True,
+                        'includeItemsFromAllDrives': True,
+                        'pageSize': 1000  # Maximum allowed by Google Drive API
+                    }
                     
-                    # If it's a file and matches pattern, add it
-                    elif re.match(file_pattern, item['name']):
-                        matching_files.append({
-                            'id': item['id'],
-                            'name': item['name'],
-                            'folder_path': current_path,
-                            'mimeType': item['mimeType']
-                        })
-                
+                    # Add page token for subsequent pages
+                    if page_token:
+                        request_params['pageToken'] = page_token
+                    
+                    # Make the API call
+                    results = self.service.files().list(**request_params).execute()
+                    items = results.get('files', [])
+                    
+                    # Debug logging (you can remove this later)
+                    txt_files = [item for item in items if item['name'].endswith('.txt')]
+                    self.logger.debug(f"Found {len(items)} items in folder: {current_path or 'root'} (page)")
+                    self.logger.debug(f"{len(txt_files)} .txt files in this page")
+                    
+                    # Process items in this page
+                    for item in items:
+                        # If it's a folder, recurse
+                        if item['mimeType'] == 'application/vnd.google-apps.folder':
+                            folder_name = item['name']
+                            new_path = f"{current_path}/{folder_name}" if current_path else folder_name
+                            matching_files.extend(explore_folder(item['id'], new_path))
+                        
+                        # If it's a file and matches pattern, add it
+                        elif re.match(file_pattern, item['name']):
+                            matching_files.append({
+                                'id': item['id'],
+                                'name': item['name'],
+                                'folder_path': current_path,
+                                'mimeType': item['mimeType']
+                            })
+                    
+                    # Check if there are more pages
+                    page_token = results.get('nextPageToken')
+                    if not page_token:
+                        break  # No more pages, we're done with this folder
+                        
                 return matching_files
-                
+            
             except Exception as e:
-                self.logger.error(f"Error exploring folder {folder_id}: {str(e)}")
+                self.logger.error(f"Error exploring folder {folder_id} (path: {current_path}): {str(e)}")
                 return []
 
         return explore_folder(folder_id)
