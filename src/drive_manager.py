@@ -79,6 +79,14 @@ class GoogleDriveManager:
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True
                 ).execute()
+
+                # Add this right after the files().list() call:
+                items = results.get('files', [])
+                self.logger.debug(f"Found {len(items)} items in folder: {current_path or 'root'}")
+
+                # Count just the .txt files in this directory
+                txt_files = [item for item in items if item['name'].endswith('.txt')]
+                self.logger.debug(f"{len(txt_files)} .txt files in this directory")
                 
                 items = results.get('files', [])
                 

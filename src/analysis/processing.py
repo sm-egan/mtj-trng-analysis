@@ -129,13 +129,25 @@ def calculate_switching_probability(measurements, threshold=None, group_by=None)
         
         return result
 
-def xorn_whitening(binary_data, n=2, verbose=False):
+def xorn_whitening(binary_data, n=2, method="nonoverlapping", verbose=False):
     L = len(binary_data)
 
-    if not (L / n).is_integer():
-        binary_data = binary_data[0:int(L / n) * n]
-    
-    xorn = np.sum(binary_data.reshape(int(L / n), n),  axis=1) % 2
+    if method == "nonoverlapping":
+        nout = int(L / n)
+
+        if not (L / n).is_integer():
+            binary_data = binary_data[0:nout * n]
+        
+        # Implement n bit XOR whitening
+        xorn = np.sum(binary_data.reshape(nout, n),  axis=1) % 2
+
+    elif method == "rolling":
+        nout = L - n + 1
+
+        rolling_data = binary_data.copy()
+        for i in range(1, n):
+            rolling_data += np.roll(binary_data, -i)
+        xorn = rolling_data[:nout] % 2
 
     if verbose:
         print(f'Performing XOR{n} whitening')
@@ -144,6 +156,9 @@ def xorn_whitening(binary_data, n=2, verbose=False):
         print('\n\nOutput:')
 
         print('---------------------')
-        print(xorn[0:10])
+        if method == "nonoverlapping":
+            print(xorn[0:10])
+        elif method == "rolling":
+            print(xorn[0:10 * n])
 
     return xorn.astype(np.uint8)

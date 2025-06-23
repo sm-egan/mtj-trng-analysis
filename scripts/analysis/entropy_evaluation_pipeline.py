@@ -75,6 +75,7 @@ class EntropyEvaluationPipeline:
         if binary_data is None:
             self.logger.warning("No data found matching criteria")
             return
+
         
         self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
         
@@ -117,6 +118,7 @@ class EntropyEvaluationPipeline:
                         self.logger.info(f"Applying XOR-{xor_n} whitening")
                         processed_data = xorn_whitening(binary_data, n=xor_n)
 
+                    self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
                     # Export binary file
                     bin_file = self.export_binary(device_id, process_name, processed_data, 
                                                  raw_hash, skip_existing)
@@ -157,10 +159,6 @@ class EntropyEvaluationPipeline:
             df_group_by = df.group_by(group_by, maintain_order=True)
             if df_group_by.len().height > 1:
                 self.logger.warning("Combining runs with different pulse/field parameters in binary data")
-            metadata_str = str(tuple(group_by))
-            for name, data in df_group_by:
-                metadata_str += f"\n{name}"
-
             
             if len(df) == 0:
                 self.logger.warning(f"No runs found for device {device_id} matching expression")
@@ -195,6 +193,12 @@ class EntropyEvaluationPipeline:
         binary_data = (stacked_df['device_voltage'] < threshold).to_numpy().astype(np.uint8)
         raw_hash = hashlib.sha256(binary_data.tobytes()).hexdigest()
         switching_probability = np.mean(binary_data)
+
+        # Add switching probability to the tuple
+        metadata_str = str(tuple(group_by) + ('switching_probability',))
+        for name, data in df_group_by:
+            metadata_str += f"\n{name + (float(f"{switching_probability:.6f}"),)}"
+
         
         return binary_data, raw_hash, switching_probability, metadata_str
     
@@ -212,6 +216,76 @@ class EntropyEvaluationPipeline:
         
         return bin_file
     
+    # def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
+    #     """Run entropy test and save results"""
+    #     # Setup
+    #     results_dir = self.results_base / device_id / process_name / test_type
+    #     results_dir.mkdir(parents=True, exist_ok=True)
+    #     results_file = results_dir / f"{raw_hash}.txt"
+        
+    #     if results_file.exists() and skip_existing:
+    #         self.logger.info(f"Test results already exist: {results_file}")
+    #         return
+        
+    #     # Run test
+    #     binary = self.ea_iid if test_type == 'iid' else self.ea_non_iid
+    #     cmd = [str(binary), '-v', str(bin_file), '1']
+        
+    #     self.logger.info(f"Running {test_type} test on {bin_file.name}")
+        
+    #     try:
+    #         start_time = datetime.now()
+    #         result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    #         duration = (datetime.now() - start_time).total_seconds()
+
+    #         # Filter out redundant progress lines
+    #         lines = result.stdout.split('\n')
+    #         filtered_lines = []
+    #         last_progress_line = None
+            
+    #         for line in lines:
+    #             # Check if this is a progress line
+    #             if '% of Permutation test rounds' in line and '% of Permutation tests' in line:
+    #                 last_progress_line = line
+    #             else:
+    #                 # If we had progress lines before this, add the last one
+    #                 if last_progress_line is not None:
+    #                     filtered_lines.append(last_progress_line)
+    #                     last_progress_line = None
+    #                 filtered_lines.append(line)
+            
+    #         # Don't forget the last progress line if it was the final line
+    #         if last_progress_line is not None:
+    #             filtered_lines.append(last_progress_line)
+            
+    #         filtered_output = '\n'.join(filtered_lines)
+            
+    #         # Save results
+    #         with open(results_file, 'w') as f:
+    #             f.write(f"Command: {' '.join(cmd)}\n")
+    #             f.write(f"Duration: {duration:.2f} seconds\n")
+    #             f.write(f"Return code: {result.returncode}\n")
+    #             f.write(f"{metadata_str}\n")
+    #             f.write("="*80 + "\n")
+    #             f.write(filtered_output)  # <-- Changed from result.stdout
+    #             if result.stderr:
+    #                 f.write("\n" + "="*80 + "\n")
+    #                 f.write("STDERR:\n")
+    #                 f.write(result.stderr)
+            
+    #         self.logger.info(f"Test completed in {duration:.2f}s")
+            
+    #         # Log key results
+    #         ## if test is non_iid or iid. Does not cover restart for now
+    #         if 'iid' in test_type and 'H_original:' in result.stdout:
+    #             h = result.stdout.split('H_original: ')[1].split('\n')[0]
+    #             self.logger.info(f"  H_original: {h}")
+                        
+    #     except subprocess.TimeoutExpired:
+    #         self.logger.error(f"Test timed out after 120 minutes")
+    #         with open(results_file, 'w') as f:
+    #             f.write("ERROR: Test timed out after 120 minutes\n")
+
     def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
         """Run entropy test and save results"""
         # Setup
@@ -231,50 +305,81 @@ class EntropyEvaluationPipeline:
         
         try:
             start_time = datetime.now()
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+            
+            if test_type == 'iid':
+                # For IID tests: monitor for failures and filter progress lines
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                         text=True, bufsize=1)
+                
+                output_lines = []
+                last_progress_line = None
+                failed = False
+                
+                # Read output line by line
+                for line in process.stdout:
+                    line = line.rstrip()
+                    
+                    # Check for failure
+                    if 'Failed' in line:
+                        self.logger.warning(f"  IID test failed: {line}")
+                        output_lines.append(line)
+                        failed = True
+                        process.terminate()
+                        break
+                    
+                    # Filter progress lines
+                    if '% of Permutation test rounds' in line and '% of Permutation tests' in line:
+                        last_progress_line = line
+                    else:
+                        # Add the last progress line before non-progress content
+                        if last_progress_line is not None:
+                            output_lines.append(last_progress_line)
+                            last_progress_line = None
+                        output_lines.append(line)
+                
+                # Add final progress line if it exists
+                if last_progress_line is not None:
+                    output_lines.append(last_progress_line)
+                
+                # Wait for process to finish
+                process.wait()
+                stderr = process.stderr.read() if process.stderr else ""
+                
+                # Prepare output
+                filtered_output = '\n'.join(output_lines)
+                if failed:
+                    filtered_output += "\n\n[Test terminated early due to failure]"
+                
+                result_returncode = process.returncode
+                result_stderr = stderr
+                
+            else:
+                # For non-IID tests: run normally without filtering
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+                filtered_output = result.stdout
+                result_returncode = result.returncode
+                result_stderr = result.stderr
+            
             duration = (datetime.now() - start_time).total_seconds()
-
-            # Filter out redundant progress lines
-            lines = result.stdout.split('\n')
-            filtered_lines = []
-            last_progress_line = None
-            
-            for line in lines:
-                # Check if this is a progress line
-                if '% of Permutation test rounds' in line and '% of Permutation tests' in line:
-                    last_progress_line = line
-                else:
-                    # If we had progress lines before this, add the last one
-                    if last_progress_line is not None:
-                        filtered_lines.append(last_progress_line)
-                        last_progress_line = None
-                    filtered_lines.append(line)
-            
-            # Don't forget the last progress line if it was the final line
-            if last_progress_line is not None:
-                filtered_lines.append(last_progress_line)
-            
-            filtered_output = '\n'.join(filtered_lines)
             
             # Save results
             with open(results_file, 'w') as f:
                 f.write(f"Command: {' '.join(cmd)}\n")
                 f.write(f"Duration: {duration:.2f} seconds\n")
-                f.write(f"Return code: {result.returncode}\n")
+                f.write(f"Return code: {result_returncode}\n")
                 f.write(f"{metadata_str}\n")
                 f.write("="*80 + "\n")
-                f.write(filtered_output)  # <-- Changed from result.stdout
-                if result.stderr:
+                f.write(filtered_output)
+                if result_stderr:
                     f.write("\n" + "="*80 + "\n")
                     f.write("STDERR:\n")
-                    f.write(result.stderr)
+                    f.write(result_stderr)
             
             self.logger.info(f"Test completed in {duration:.2f}s")
             
-            # Log key results
-            ## if test is non_iid or iid. Does not cover restart for now
-            if 'iid' in test_type and 'H_original:' in result.stdout:
-                h = result.stdout.split('H_original: ')[1].split('\n')[0]
+            # Log key results for IID tests
+            if 'H_original:' in filtered_output:
+                h = filtered_output.split('H_original: ')[1].split('\n')[0]
                 self.logger.info(f"  H_original: {h}")
                         
         except subprocess.TimeoutExpired:
@@ -293,13 +398,15 @@ if __name__ == "__main__":
         ea_binaries_path="/Users/shannonegan/Documents/DSV/StochastIQ/umn/SP800-90B_EntropyAssessment/cpp"
     )
     
-    #Process a device
+    # Loop over perturb pulse widths for Device 07_08
     for s_width_ns in np.arange(2,8,1):
 
         pipeline.evaluate_entropy(
             device_id="07_08",
+            # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+            ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
             polars_expr=(pl.col("s_amplitude") == 4.73) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 319),
-            tests=['non_iid'],
+            tests=['non_iid', 'iid'],
             skip_existing=False,
         )
 

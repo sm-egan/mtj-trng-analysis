@@ -100,10 +100,20 @@ def import_drive_data(folder_id,
 
             # Filter for only non-existing filenames
             filtered_files = [file for file in files if file['name'] not in existing_filenames]
+
             original_count = len(files)
             skipped_count = original_count - len(filtered_files)
             logger.info(f"Skipping {skipped_count} files that already exist in the database")
             files = filtered_files
+
+        # Ignore the files in folder Device_07_08/Data_new, hacky hard-coded way.
+        ## Voltage peaks are shifted in this data, which changes the threshold for this device.
+        D07_08_Data_new = [file for file in files if 'Device_07_08/Data_new' in file['folder_path']]
+        filtered_files = [file for file in files if not file['name'] in D07_08_Data_new]
+        # Log the filtered files
+        logger.debug(f"Filtered out {len(D07_08_Data_new)} files from Device_07_08/Data_new folder")
+
+        files = filtered_files
 
         # Process files
         imported_count = 0
@@ -148,7 +158,8 @@ if __name__ == "__main__":
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Import experimental data from Google Drive')
     parser.add_argument('--folder_id', help='Google Drive folder ID to import from (overrides config default)')
-    parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", help='Regex pattern to match filenames')
+    #parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", help='Regex pattern to match filenames')
+    parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?[\d.]+[eE][+-]?\d+_RWid[\d.]+[eE][+-]?\d+_SAmp[+-]?[\d.]+[eE][+-]?\d+_SWid[\d.]+[eE][+-]?\d+_Field[+-]?[\d.]+[eE][+-]?\d+_Source[\d.]+[eE][+-]?\d+_Repeats[\d.]+[eE][+-]?\d+\.txt$", help='Regex pattern to match filenames')
     parser.add_argument('--logging_level', default="INFO", help='Logging level (INFO, DEBUG)')
     parser.add_argument('--n_files', default=None, help='Number of files to import, if less that full list')
     parser.add_argument('--shuffle_files', default=False, help='Option to shuffle files in list before download. Only used when n_files is also specified.')
