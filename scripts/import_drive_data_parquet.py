@@ -111,7 +111,7 @@ def import_drive_data(folder_id,
         D07_08_Data_new = [file for file in files if 'Device_07_08/Data_new' in file['folder_path']]
         filtered_files = [file for file in files if not file['name'] in D07_08_Data_new]
         # Log the filtered files
-        logger.debug(f"Filtered out {len(D07_08_Data_new)} files from Device_07_08/Data_new folder")
+        logger.info(f"Filtered out {len(D07_08_Data_new)} files from Device_07_08/Data_new folder")
 
         files = filtered_files
 

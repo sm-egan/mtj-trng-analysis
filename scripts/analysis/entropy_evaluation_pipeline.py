@@ -79,24 +79,6 @@ class EntropyEvaluationPipeline:
         
         self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
         
-        # Process each XOR level
-        # for xor_n in xor_levels:
-        #     if xor_n == 1:
-        #         processed_data = binary_data
-        #         process_name = "raw"
-        #     else:
-        #         self.logger.info(f"Applying XOR-{xor_n} whitening")
-        #         processed_data = xorn_whitening(binary_data, n=xor_n)
-        #         process_name = f"xor{xor_n}"
-            
-        #     # Export binary file
-        #     bin_file = self.export_binary(device_id, process_name, processed_data, 
-        #                                  raw_hash, skip_existing)
-            
-        #     # Run tests
-        #     for test in tests:
-        #         self.run_test(device_id, process_name, bin_file, raw_hash, 
-        #                      test, skip_existing)
 
         # Set test as outer loop, since non-iid tests runs much faster you don't have to wait for results
         for test in tests:
@@ -215,76 +197,139 @@ class EntropyEvaluationPipeline:
             self.logger.info(f"Exported {len(data)} bytes to {bin_file}")
         
         return bin_file
-    
-    # def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
-    #     """Run entropy test and save results"""
-    #     # Setup
-    #     results_dir = self.results_base / device_id / process_name / test_type
-    #     results_dir.mkdir(parents=True, exist_ok=True)
-    #     results_file = results_dir / f"{raw_hash}.txt"
-        
-    #     if results_file.exists() and skip_existing:
-    #         self.logger.info(f"Test results already exist: {results_file}")
-    #         return
-        
-    #     # Run test
-    #     binary = self.ea_iid if test_type == 'iid' else self.ea_non_iid
-    #     cmd = [str(binary), '-v', str(bin_file), '1']
-        
-    #     self.logger.info(f"Running {test_type} test on {bin_file.name}")
-        
-    #     try:
-    #         start_time = datetime.now()
-    #         result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
-    #         duration = (datetime.now() - start_time).total_seconds()
 
-    #         # Filter out redundant progress lines
-    #         lines = result.stdout.split('\n')
-    #         filtered_lines = []
-    #         last_progress_line = None
+
+    def export_restart_binaries(self, device_id=None, process_names=None, 
+                          file_hash=None, samples_per_file=1_000_000, skip_existing=True):
+        """
+        Create restart test sample files from existing binary files.
+        Each restart file contains exactly samples_per_file samples (default 1M).
+        
+        Args:
+            device_id: Specific device to process (e.g., "07_08"). If None, process all.
+            process_names: List of process names (e.g., ["raw", "xor2"]). If None, process all.
+            file_hash: Specific file hash to process. If provided with device_id but no process_names,
+                       will search for this hash in all process directories of the device.
+            samples_per_file: Number of samples per restart file (default 1,000,000)
+            skip_existing: Skip if restart files already exist
             
-    #         for line in lines:
-    #             # Check if this is a progress line
-    #             if '% of Permutation test rounds' in line and '% of Permutation tests' in line:
-    #                 last_progress_line = line
-    #             else:
-    #                 # If we had progress lines before this, add the last one
-    #                 if last_progress_line is not None:
-    #                     filtered_lines.append(last_progress_line)
-    #                     last_progress_line = None
-    #                 filtered_lines.append(line)
+        Returns:
+            dict: Summary of created files {device_id: {process: {hash: num_files_created}}}
+        """
+        import numpy as np
+        from pathlib import Path
+        
+        summary = {}
+        
+        # If file_hash is specified, require device_id
+        if file_hash and not device_id:
+            raise ValueError("When file_hash is specified, device_id must also be provided")
+        
+        # Convert process_names to list if it's a string
+        if process_names and isinstance(process_names, str):
+            process_names = [process_names]
+        
+        # Determine which devices to process
+        if device_id:
+            device_dirs = [self.output_base / device_id]
+        else:
+            device_dirs = [d for d in self.output_base.iterdir() if d.is_dir()]
+        
+        for device_dir in device_dirs:
+            device_id = device_dir.name
+            summary[device_id] = {}
             
-    #         # Don't forget the last progress line if it was the final line
-    #         if last_progress_line is not None:
-    #             filtered_lines.append(last_progress_line)
+            # If hash is specified but no process_names, search for it
+            if file_hash and not process_names:
+                self.logger.info(f"Searching for hash {file_hash[:12]}... in device {device_id}")
+                found_processes = []
+                for potential_process in device_dir.iterdir():
+                    if potential_process.is_dir() and potential_process.name != 'restart':
+                        if (potential_process / f"{file_hash}.bin").exists():
+                            found_processes.append(potential_process.name)
+                            self.logger.info(f"  Found in {potential_process.name}")
+                
+                if not found_processes:
+                    self.logger.warning(f"Hash {file_hash[:12]}... not found in any process directory of device {device_id}")
+                    continue
+                
+                process_dirs = [device_dir / p for p in found_processes]
+            elif process_names:
+                process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
+            else:
+                process_dirs = [d for d in device_dir.iterdir() 
+                               if d.is_dir() and d.name != 'restart']
             
-    #         filtered_output = '\n'.join(filtered_lines)
-            
-    #         # Save results
-    #         with open(results_file, 'w') as f:
-    #             f.write(f"Command: {' '.join(cmd)}\n")
-    #             f.write(f"Duration: {duration:.2f} seconds\n")
-    #             f.write(f"Return code: {result.returncode}\n")
-    #             f.write(f"{metadata_str}\n")
-    #             f.write("="*80 + "\n")
-    #             f.write(filtered_output)  # <-- Changed from result.stdout
-    #             if result.stderr:
-    #                 f.write("\n" + "="*80 + "\n")
-    #                 f.write("STDERR:\n")
-    #                 f.write(result.stderr)
-            
-    #         self.logger.info(f"Test completed in {duration:.2f}s")
-            
-    #         # Log key results
-    #         ## if test is non_iid or iid. Does not cover restart for now
-    #         if 'iid' in test_type and 'H_original:' in result.stdout:
-    #             h = result.stdout.split('H_original: ')[1].split('\n')[0]
-    #             self.logger.info(f"  H_original: {h}")
+            for process_dir in process_dirs:
+                process_name = process_dir.name
+                summary[device_id][process_name] = {}
+                
+                # Find all .bin files in this directory
+                if file_hash:
+                    # Look for specific hash
+                    bin_files = [f for f in process_dir.glob(f'{file_hash}.bin') if f.exists()]
+                    if not bin_files:
+                        self.logger.warning(f"Hash {file_hash} not found in {process_dir}")
+                else:
+                    # Get all .bin files
+                    bin_files = list(process_dir.glob('*.bin'))
+                
+                for bin_file in bin_files:
+                    # Extract hash from filename
+                    file_hash = bin_file.stem
+                    
+                    # Create restart directory structure
+                    restart_dir = process_dir / 'restart' / file_hash
+                    
+                    # Check if we should skip
+                    if skip_existing and restart_dir.exists() and any(restart_dir.glob('*.bin')):
+                        self.logger.info(f"Skipping {device_id}/{process_name}/{file_hash} - restart samples already exist")
+                        summary[device_id][process_name][file_hash] = 0
+                        continue
+                    
+                    # Create directory
+                    restart_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Read the original binary file
+                    self.logger.info(f"Reading {bin_file.name}")
+                    with open(bin_file, 'rb') as f:
+                        data = np.frombuffer(f.read(), dtype=np.uint8)
+                    
+                    total_samples = len(data)
+                    num_files = total_samples // samples_per_file
+                    
+                    if num_files == 0:
+                        self.logger.warning(f"File {bin_file.name} has only {total_samples} samples, "
+                                          f"need at least {samples_per_file} for restart test")
+                        summary[device_id][process_name][file_hash] = 0
+                        continue
+                    
+                    # Create restart sample files
+                    self.logger.info(f"Creating {num_files} restart files from {total_samples} total samples")
+                    
+                    for i in range(num_files):
+                        start_idx = i * samples_per_file
+                        end_idx = start_idx + samples_per_file
                         
-    #     except subprocess.TimeoutExpired:
-    #         self.logger.error(f"Test timed out after 120 minutes")
-    #         with open(results_file, 'w') as f:
-    #             f.write("ERROR: Test timed out after 120 minutes\n")
+                        # Extract the sample
+                        sample_data = data[start_idx:end_idx]
+                        
+                        # Write to file
+                        output_file = restart_dir / f"{i}.bin"
+                        with open(output_file, 'wb') as f:
+                            f.write(sample_data.tobytes())
+                        
+                        self.logger.debug(f"Created {output_file} with {len(sample_data)} samples")
+                    
+                    summary[device_id][process_name][file_hash] = num_files
+                    
+                    # Log info about unused samples
+                    unused_samples = total_samples - (num_files * samples_per_file)
+                    if unused_samples > 0:
+                        self.logger.info(f"Discarded last {unused_samples} samples from {bin_file.name}")
+        
+        return summary
+
 
     def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
         """Run entropy test and save results"""
@@ -399,16 +444,38 @@ if __name__ == "__main__":
     )
     
     # Loop over perturb pulse widths for Device 07_08
-    for s_width_ns in np.arange(2,8,1):
+    # for s_width_ns in np.arange(2,8,1):
 
+    #     pipeline.evaluate_entropy(
+    #         device_id="07_08",
+    #         # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+    #         ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+    #         polars_expr=(pl.col("s_amplitude") == 4.73) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 319),
+    #         tests=['non_iid', 'iid'],
+    #         skip_existing=False,
+    #     )
+
+    ###################################################
+    # Loop over perturb pulse widths for Device 011_08
+    for s_width_ns in np.arange(2,7,1):
         pipeline.evaluate_entropy(
-            device_id="07_08",
+            device_id="011_08",
             # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
             ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
-            polars_expr=(pl.col("s_amplitude") == 4.73) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 319),
+            polars_expr=(pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 168),
             tests=['non_iid', 'iid'],
             skip_existing=False,
         )
+
+    pipeline.evaluate_entropy(
+        device_id="011_08",
+        # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+        ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+        polars_expr=(pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == 1e-8) & (pl.col("row_number") < 168),
+        tests=['non_iid', 'iid'],
+        skip_existing=False,
+    )
+    ###################################################
 
     # pipeline.evaluate_entropy(
     #     device_id="023_07",
