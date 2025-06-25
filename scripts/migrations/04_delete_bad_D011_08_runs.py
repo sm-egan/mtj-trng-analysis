@@ -26,7 +26,7 @@ def setup_logging():
 
 def identify_bad_runs(db_path):
     """
-    Identify runs from device D011_08 with row_number > 168 or row_number < 52
+    Identify runs from device D011_08 with row_number > 462 or row_number < 52
     
     Returns:
         list: List of dictionaries with run information
@@ -38,7 +38,7 @@ def identify_bad_runs(db_path):
         SELECT run_id, device_id, row_number, r_amplitude, parquet_file, parquet_column, filename
         FROM runs 
         WHERE device_id = '011_08' 
-        AND (row_number < 52 OR row_number > 168)
+        AND (row_number < 52 OR row_number > 462)
         ORDER BY row_number, r_amplitude
         """
         
@@ -177,7 +177,7 @@ def delete_bad_runs(db_path, parquet_dir, dry_run=True, force=False):
     
     logger.info(f"\nMigration completed successfully!")
     logger.info(f"Deleted {len(bad_runs)} runs from device D011_08")
-    logger.info("You can now run populate_device_data.py --force --device D011_08 to recalculate thresholds")
+    logger.info("You can now run populate_device_data.py --force --device 011_08 to recalculate thresholds")
 
 def main():
     parser = argparse.ArgumentParser(description="Delete bad runs from device D011_08")

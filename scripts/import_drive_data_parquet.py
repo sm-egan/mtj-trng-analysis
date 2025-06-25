@@ -106,14 +106,9 @@ def import_drive_data(folder_id,
             logger.info(f"Skipping {skipped_count} files that already exist in the database")
             files = filtered_files
 
-        # Ignore the files in folder Device_07_08/Data_new, hacky hard-coded way.
-        ## Voltage peaks are shifted in this data, which changes the threshold for this device.
-        D07_08_Data_new = [file for file in files if 'Device_07_08/Data_new' in file['folder_path']]
-        filtered_files = [file for file in files if not file['name'] in D07_08_Data_new]
-        # Log the filtered files
-        logger.info(f"Filtered out {len(D07_08_Data_new)} files from Device_07_08/Data_new folder")
-
-        files = filtered_files
+        do_not_import = [file['name'] for file in files if 'Do_not_import' in file['folder_path']]
+        logger.info(f"Skipping {len(do_not_import)} files marked as 'Do_not_import' in their folder path")
+        filtered_files = [file for file in files if file['name'] not in do_not_import]
 
         # Process files
         imported_count = 0
