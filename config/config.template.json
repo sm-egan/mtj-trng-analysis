@@ -5,5 +5,8 @@
     },
     "database": {
         "path": "database/mtj_switching_data_parquet.db"
+    },
+    "ea_binaries": {
+        "path": "/path/to/SP800-90B_EntropyAssessment/cpp"
     }
 }

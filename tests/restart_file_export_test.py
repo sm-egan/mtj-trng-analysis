@@ -1,13 +1,15 @@
 from pathlib import Path
+import sys
+from src.parquet_data_manager import ParquetExperimentalDataManager
+from src.analysis.entropy_evaluation_pipeline import EntropyEvaluationPipeline
 
 if __name__ == "__main__":
     # Add project root to Python path
     project_root = Path.cwd().parent  # Assumes notebook is in notebooks/
     sys.path.insert(0, str(project_root))
+
     
-    from src.parquet_data_manager import ParquetExperimentalDataManager
-    
-    # Test the create_restart_samples method
+    # Test the export_restart_binaries method
     dm = ParquetExperimentalDataManager()
     pipeline = EntropyEvaluationPipeline(
         dm, 
@@ -15,11 +17,11 @@ if __name__ == "__main__":
     )
     
     # Test on one device and one process type
-    print("Testing create_restart_samples method...")
+    print("Testing export_restart_binaries method...")
     
     # Test 1: Process all files for a device/process
     print("\n1. Testing with device and process:")
-    summary = pipeline.create_restart_samples(
+    summary = pipeline.export_restart_binaries(
         device_id="07_08",
         process_names=["raw"],
         skip_existing=False  # Force recreation for testing
@@ -40,7 +42,7 @@ if __name__ == "__main__":
         first_hash = list(summary["07_08"]["raw"].keys())[0]
         print(f"Processing hash: {first_hash[:12]}...")
         
-        summary2 = pipeline.create_restart_samples(
+        summary2 = pipeline.export_restart_binaries(
             device_id="07_08",
             process_names="xor2",  # Process for xor2 version
             file_hash=first_hash,
@@ -55,7 +57,7 @@ if __name__ == "__main__":
         first_hash = list(summary["07_08"]["raw"].keys())[0]
         print(f"Processing hash: {first_hash[:12]}... across all processes")
         
-        summary3 = pipeline.create_restart_samples(
+        summary3 = pipeline.export_restart_binaries(
             device_id="07_08",
             file_hash=first_hash,  # No process_names specified - will find all
             skip_existing=False

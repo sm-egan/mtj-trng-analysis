@@ -164,33 +164,6 @@ class ExperimentalDataManager:
             raise ValueError(f"Missing required parameters: {missing_params}")
             
         return params
-        
-        params = {}
-        for key, pattern in patterns.items():
-            try:
-                match = re.search(pattern, filename)
-                if match:
-                    value_str = match.group(1)
-                    try:
-                        value = float(value_str)
-                        params[key] = value
-                        self.logger.debug(f"Parsed {key}: {value}")
-                    except ValueError:
-                        self.logger.error(f"Could not convert {key} value '{value_str}' to float")
-                        raise
-                else:
-                    self.logger.warning(f"Could not find {key} in filename: {filename}")
-            except Exception as e:
-                self.logger.error(f"Error parsing {key} from filename: {str(e)}")
-                raise
-                
-        # Verify we got all required parameters
-        required_params = patterns.keys()
-        missing_params = [param for param in required_params if param not in params]
-        if missing_params:
-            raise ValueError(f"Missing required parameters: {missing_params}")
-            
-        return params
 
     def generate_run_id(self, params: Dict, measurements: np.ndarray) -> Tuple[str, str]:
         run_components = [
