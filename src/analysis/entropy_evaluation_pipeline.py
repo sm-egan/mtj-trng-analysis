@@ -467,7 +467,7 @@ class EntropyEvaluationPipeline:
         binary = self.ea_iid if test_type == 'iid' else self.ea_non_iid
         cmd = [str(binary), '-v', str(bin_file), '1']
         
-        self.logger.info(f"Running {test_type} test on {bin_file.name}")
+        self.logger.info(f"Running {test_type} test on {str(bin_file)}")
         
         try:
             start_time = datetime.now()
@@ -502,6 +502,9 @@ class EntropyEvaluationPipeline:
                             output_lines.append(last_progress_line)
                             last_progress_line = None
                         output_lines.append(line)
+
+                    if 'Passed IID permutation tests' in line:
+                        self.logger.info(f"    IID tests passed: {line}")
                 
                 # Add final progress line if it exists
                 if last_progress_line is not None:

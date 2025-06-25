@@ -54,11 +54,36 @@ if __name__ == "__main__":
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",
-    #     # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
-    #     ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
     #     polars_expr=(pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == 1e-8) & (pl.col("row_number") < 168),
     #     tests=['non_iid', 'iid'],
     # )
+
+
+    # 011_08 runs with r_amplitude = -0.7
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     polars_expr=(pl.col("row_number").is_between(243, 260)),
+    #     tests=['non_iid', 'iid']
+    # )
+
+    # for s_width_ns in np.arange(2,7,1):
+    #     pipeline.evaluate_entropy(
+    #         device_id="011_08",
+    #         # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+    #         ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+    #         polars_expr=(pl.col("r_amplitude") == -0.7) & (pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == float(f"{s_width_ns}e-9")) & (pl.col("row_number") < 308),
+    #         tests=['non_iid', 'iid'],
+    #     )
+
+    pipeline.evaluate_entropy(
+        device_id="011_08",
+        # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+        ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+        polars_expr=(pl.col("r_amplitude") == -0.7) & (pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == 1e-8) & (pl.col("row_number") < 308),
+        tests=['non_iid', 'iid'],
+        skip_existing=False
+    )
+
 
     # pipeline.evaluate_entropy(
     #     device_id="023_07",
@@ -81,11 +106,14 @@ if __name__ == "__main__":
         device_id="011_08"
     )
 
+    #tasks = pipeline.create_restart_test_plan(device_id='011_08',file_hash='90c7317d8d67d14414f2ae742e8c60e63cfa8c7b403e216493f3ba36db77b5d0')
+    #print(tasks)
+
     # Print summary
-    print("\nSummary of created restart files:")
-    for device, processes in summary.items():
-        print(f"\nDevice: {device}")
-        for process, files in processes.items():
-            print(f"  Process: {process}")
-            for file_hash, num_created in files.items():
-                print(f"    {file_hash[:12]}...: {num_created} restart files")
+    # print("\nSummary of created restart files:")
+    # for device, processes in summary.items():
+    #     print(f"\nDevice: {device}")
+    #     for process, files in processes.items():
+    #         print(f"  Process: {process}")
+    #         for file_hash, num_created in files.items():
+    #             print(f"    {file_hash[:12]}...: {num_created} restart files")
