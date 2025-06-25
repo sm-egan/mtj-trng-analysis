@@ -107,6 +107,8 @@ def import_drive_data(folder_id,
             files = filtered_files
 
         do_not_import = [file['name'] for file in files if 'Do_not_import' in file['folder_path']]
+        for i in range(0,10):
+            logger.info(f"Checking folder path for files[{str{i}}]: {files[i]['folder_path']}")
         logger.info(f"Skipping {len(do_not_import)} files marked as 'Do_not_import' in their folder path")
         filtered_files = [file for file in files if file['name'] not in do_not_import]
 

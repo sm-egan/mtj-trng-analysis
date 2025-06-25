@@ -107,13 +107,6 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         params = self.parse_filename(filepath.name)
         if device_id:
             params['device_id'] = device_id
-
-        # Hard-coded way of filtering out "bad" runs from Device 011_08
-        if device_id == '011_08' and params["row"] > 426:
-            self.logger.warning(f"Skipping run from Device 011_08 with row > 426: {params['row']}")
-            return None
-        else:
-            self.logger.debug(f"Did not skip run from Device {device_id} with row {params['row']}")
         
         # Load the data file
         try:
