@@ -46,7 +46,7 @@ class GoogleDriveManager:
             self.logger.error(f"Error listing folder contents: {str(e)}")
             raise
 
-    def list_files_recursively(self, folder_id, file_pattern=r"Hz_.*\.txt$") -> list:
+    def list_files_recursively(self, folder_id, file_pattern=r"Hz_.*\.txt$", include_do_not_import=True) -> list:
         """
         Recursively list all matching files in a folder and its subfolders
         
@@ -59,16 +59,6 @@ class GoogleDriveManager:
         """
         import re
         
-        def get_folder_name(folder_id):
-            try:
-                folder = self.service.files().get(
-                    fileId=folder_id,
-                    supportsAllDrives=True
-                ).execute()
-                return folder.get('name', '')
-            except Exception:
-                return ''
-
         def explore_folder(folder_id, current_path=''):
             matching_files = []
             
@@ -103,6 +93,9 @@ class GoogleDriveManager:
                         # If it's a folder, recurse
                         if item['mimeType'] == 'application/vnd.google-apps.folder':
                             folder_name = item['name']
+                            if not include_do_not_import and folder_name.lower() == 'do_not_import':
+                                self.logger.info(f"Skipping folder marked Do_not_import: {current_path}/{folder_name}")
+                                continue
                             new_path = f"{current_path}/{folder_name}" if current_path else folder_name
                             matching_files.extend(explore_folder(item['id'], new_path))
                         

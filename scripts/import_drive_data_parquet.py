@@ -77,7 +77,7 @@ def import_drive_data(folder_id,
     try:
         # Recursively list all matching files
         logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
-        files = drive_manager.list_files_recursively(folder_id, file_pattern)
+        files = drive_manager.list_files_recursively(folder_id, file_pattern, include_do_not_import=False)
         logger.info(f"Found {len(files)} matching files")
 
         if n_files:
@@ -105,12 +105,6 @@ def import_drive_data(folder_id,
             skipped_count = original_count - len(filtered_files)
             logger.info(f"Skipping {skipped_count} files that already exist in the database")
             files = filtered_files
-
-        do_not_import = [file['name'] for file in files if 'Do_not_import' in file['folder_path']]
-        for i in range(0,10):
-            logger.info(f"Checking folder path for files[{str{i}}]: {files[i]['folder_path']}")
-        logger.info(f"Skipping {len(do_not_import)} files marked as 'Do_not_import' in their folder path")
-        filtered_files = [file for file in files if file['name'] not in do_not_import]
 
         # Process files
         imported_count = 0
