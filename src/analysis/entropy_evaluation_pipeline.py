@@ -45,6 +45,69 @@ class EntropyEvaluationPipeline:
         )
         self.logger = logging.getLogger(__name__)
     
+    # def evaluate_entropy(self, 
+    #                     device_id: str,
+    #                     polars_expr: Optional[pl.Expr] = None,
+    #                     run_ids: Optional[List[str]] = None,
+    #                     xor_levels: List[int] = [1, 2, 4, 8],
+    #                     skip_existing: bool = True,
+    #                     tests: List[str] = ['non_iid', 'iid']):
+    #     """
+    #     Evaluate entropy for a specific device
+        
+    #     Args:
+    #         device_id: Device ID to process (e.g., "07_08")
+    #         polars_expr: Polars expression for filtering runs
+    #         run_ids: List of specific run IDs (must be pre-sorted by row_number!)
+    #         xor_levels: List of XOR whitening levels (1 means raw)
+    #         skip_existing: Skip if output files already exist
+    #         tests: Which tests to run ('iid', 'non_iid')
+            
+    #     Example:
+    #         pipeline.evaluate_entropy(
+    #             device_id="07_08",
+    #             polars_expr=(pl.col("field") == 10.0),
+    #             xor_levels=[1, 2, 4, 8]
+    #         )
+    #     """
+    #     # Get binary data
+    #     binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
+    #     if binary_data is None:
+    #         self.logger.warning("No data found matching criteria")
+    #         return
+
+        
+    #     self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
+        
+
+    #     # Set test as outer loop, since non-iid tests runs much faster you don't have to wait for results
+    #     for test in tests:
+    #         for xor_n in xor_levels:                
+    #             if xor_n == 1:
+    #                 process_name = "raw"
+    #             else:
+    #                 process_name = f"xor{xor_n}"
+
+    #             # Kind of hacky/repetitive with export_binary, fix later. Construct bin_file the same way as export_binary in order to check if the target file already exists
+    #             ## Added this when I reversed order of test and xor loop
+    #             bin_dir = self.output_base / device_id / process_name            
+    #             bin_file = bin_dir / f"{raw_hash}.bin"
+
+    #             if not (bin_file.exists() and skip_existing):
+    #                 if process_name == "raw":
+    #                     processed_data = binary_data
+    #                 else:
+    #                     self.logger.info(f"Applying XOR-{xor_n} whitening")
+    #                     processed_data = xorn_whitening(binary_data, n=xor_n)
+
+    #                 self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
+    #                 # Export binary file
+    #                 bin_file = self.export_binary(device_id, process_name, processed_data, 
+    #                                              raw_hash, skip_existing)
+
+    #             self.run_test(device_id, process_name, bin_file, raw_hash, 
+    #                              test, skip_existing, metadata_str)
+
     def evaluate_entropy(self, 
                         device_id: str,
                         polars_expr: Optional[pl.Expr] = None,
@@ -61,54 +124,141 @@ class EntropyEvaluationPipeline:
             run_ids: List of specific run IDs (must be pre-sorted by row_number!)
             xor_levels: List of XOR whitening levels (1 means raw)
             skip_existing: Skip if output files already exist
-            tests: Which tests to run ('iid', 'non_iid')
+            tests: Which tests to run ('iid', 'non_iid', 'restart')
+                Note: 'restart' requires 'iid' to run first, and 'non_iid' if IID fails
             
         Example:
+            # Run all tests including restart
             pipeline.evaluate_entropy(
                 device_id="07_08",
                 polars_expr=(pl.col("field") == 10.0),
-                xor_levels=[1, 2, 4, 8]
+                xor_levels=[1, 2, 4, 8],
+                tests=['iid', 'non_iid', 'restart']
+            )
+            
+            # Run only restart tests (assumes IID/non-IID already completed)
+            pipeline.evaluate_entropy(
+                device_id="07_08",
+                polars_expr=(pl.col("field") == 10.0),
+                tests=['restart']
             )
         """
-        # Get binary data
-        binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
-        if binary_data is None:
-            self.logger.warning("No data found matching criteria")
-            return
-
+        # Validate test types
+        valid_tests = {'iid', 'non_iid', 'restart'}
+        invalid_tests = set(tests) - valid_tests
+        if invalid_tests:
+            raise ValueError(f"Invalid test types: {invalid_tests}. Valid options: {valid_tests}")
         
-        self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
+        # Check if restart is requested without prerequisite tests
+        if 'restart' in tests:
+            if 'iid' not in tests:
+                self.logger.warning("Restart tests require IID results. Will check for existing IID results.")
         
-
-        # Set test as outer loop, since non-iid tests runs much faster you don't have to wait for results
-        for test in tests:
-            for xor_n in xor_levels:                
-                if xor_n == 1:
-                    process_name = "raw"
-                else:
-                    process_name = f"xor{xor_n}"
-
-                # Kind of hacky/repetitive with export_binary, fix later. Construct bin_file the same way as export_binary in order to check if the target file already exists
-                ## Added this when I reversed order of test and xor loop
-                bin_dir = self.output_base / device_id / process_name            
-                bin_file = bin_dir / f"{raw_hash}.bin"
-
-                if not (bin_file.exists() and skip_existing):
-                    if process_name == "raw":
-                        processed_data = binary_data
+        # Separate restart from other tests
+        basic_tests = [t for t in tests if t != 'restart']
+        run_restart = 'restart' in tests
+        
+        # Store hashes for each process level for restart tests
+        process_hashes = {}
+        
+        # Run basic tests if requested
+        if basic_tests:
+            # Get binary data
+            binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
+            if binary_data is None:
+                self.logger.warning("No data found matching criteria")
+                return
+            
+            self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
+            
+            # Run IID and non-IID tests
+            for test in basic_tests:
+                for xor_n in xor_levels:                
+                    if xor_n == 1:
+                        process_name = "raw"
                     else:
-                        self.logger.info(f"Applying XOR-{xor_n} whitening")
-                        processed_data = xorn_whitening(binary_data, n=xor_n)
+                        process_name = f"xor{xor_n}"
 
-                    self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
-                    # Export binary file
-                    bin_file = self.export_binary(device_id, process_name, processed_data, 
-                                                 raw_hash, skip_existing)
+                    # Store hash for each process level
+                    process_hashes[process_name] = raw_hash
 
-                self.run_test(device_id, process_name, bin_file, raw_hash, 
-                                 test, skip_existing, metadata_str)
+                    bin_dir = self.output_base / device_id / process_name            
+                    bin_file = bin_dir / f"{raw_hash}.bin"
 
+                    if not (bin_file.exists() and skip_existing):
+                        if process_name == "raw":
+                            processed_data = binary_data
+                        else:
+                            self.logger.info(f"Applying XOR-{xor_n} whitening")
+                            processed_data = xorn_whitening(binary_data, n=xor_n)
 
+                        self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
+                        # Export binary file
+                        bin_file = self.export_binary(device_id, process_name, processed_data, 
+                                                    raw_hash, skip_existing)
+
+                    self.run_test(device_id, process_name, bin_file, raw_hash, 
+                                test, skip_existing, metadata_str)
+        
+        # Run restart tests if requested
+        if run_restart:
+            self.logger.info("\n" + "="*80)
+            self.logger.info("Starting restart tests")
+            self.logger.info("="*80)
+            
+            # If we just ran basic tests, we know which files to process
+            if process_hashes:
+                # Create restart binaries for the files we just processed
+                for process_name, file_hash in process_hashes.items():
+                    self.logger.info(f"\nCreating restart samples for {device_id}/{process_name}/{file_hash[:12]}...")
+                    self.export_restart_binaries(
+                        device_id=device_id,
+                        process_names=process_name,
+                        file_hash=file_hash,
+                        skip_existing=skip_existing
+                    )
+                
+                # Run restart tests for these specific files
+                self.logger.info("\nRunning restart tests...")
+                for process_name, file_hash in process_hashes.items():
+                    tasks = self.create_restart_test_plan(
+                        device_id=device_id,
+                        process_names=process_name,
+                        file_hash=file_hash
+                    )
+                    if tasks:
+                        self.run_restart_tests(tasks=tasks, skip_existing=skip_existing)
+                    else:
+                        self.logger.warning(f"No restart tests available for {device_id}/{process_name}/{file_hash[:12]}...")
+            
+            else:
+                # No basic tests were run, so process all existing files
+                self.logger.info("Running restart tests for all existing test results...")
+                
+                # Determine which processes to check based on xor_levels
+                process_names_to_check = []
+                for xor_n in xor_levels:
+                    if xor_n == 1:
+                        process_names_to_check.append("raw")
+                    else:
+                        process_names_to_check.append(f"xor{xor_n}")
+                
+                # Create restart binaries for all existing files
+                self.logger.info(f"Creating restart samples for device {device_id}...")
+                self.export_restart_binaries(
+                    device_id=device_id,
+                    process_names=process_names_to_check,
+                    skip_existing=skip_existing
+                )
+                
+                # Run restart tests
+                self.run_restart_tests(
+                    device_id=device_id,
+                    process_names=process_names_to_check,
+                    skip_existing=skip_existing
+                )
+        
+        self.logger.info("\nEntropy evaluation complete.")
     
     def get_binary_data(self, device_id: str, polars_expr: Optional[pl.Expr], 
                         run_ids: Optional[List[str]], 
@@ -199,7 +349,7 @@ class EntropyEvaluationPipeline:
         return bin_file
 
 
-    def export_restart_binaries(self, device_id=None, process_names=None, 
+    def export_restart_binaries(self, device_id=None, process_names=None, file_hash=None,
                           samples_per_file=1_000_000, skip_existing=True):
         """
         Create restart test sample files from existing binary files.
@@ -208,8 +358,7 @@ class EntropyEvaluationPipeline:
         Args:
             device_id: Specific device to process (e.g., "07_08"). If None, process all.
             process_names: List of process names (e.g., ["raw", "xor2"]). If None, process all.
-            file_hash: Specific file hash to process. If provided with device_id but no process_names,
-                       will search for this hash in all process directories of the device.
+            file_hash: Specific file hashes to process. If None, process all .bin files.
             samples_per_file: Number of samples per restart file (default 1,000,000)
             skip_existing: Skip if restart files already exist
             
@@ -222,31 +371,44 @@ class EntropyEvaluationPipeline:
         summary = {}
         
         # Convert process_names to list if it's a string
-        if process_names is None:
-            process_names = ["raw","xor2","xor4","xor8"]
-        elif process_names and isinstance(process_names, str):
-            process_names = [process_names]
-        else:
-            self.logger.info(f"User passed list of process names: {process_names}")    
+        # if process_names is None:
+        #     process_names = ["raw","xor2","xor4","xor8"]
+        # elif process_names and isinstance(process_names, str):
+        #     process_names = [process_names]
+        # else:
+        #     self.logger.info(f"User passed list of process names: {process_names}")
         
         # Determine which devices to process
         if device_id:
             device_dirs = [self.output_base / device_id]
         else:
-            device_dirs = [d for d in self.output_base.iterdir() if d.is_dir()]
+            device_dirs = [d for d in self.output_base.iterdir() if d.is_dir() and '_' in d.name]
         
         for device_dir in device_dirs:
             device_id = device_dir.name
             summary[device_id] = {}
             
-            process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
+            if process_names:
+                if isinstance(process_names, str):
+                    process_names = [process_names]
+                process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
+            else:
+                process_dirs = [d for d in device_dir.iterdir() 
+                               if d.is_dir() and d.name != 'restart']
 
             for process_dir in process_dirs:
                 process_name = process_dir.name
                 summary[device_id][process_name] = {}
                 
                 # Get all .bin files
-                bin_files = list(process_dir.glob('*.bin'))
+                if file_hash:
+                    if isinstance(file_hash, str):
+                        bin_files = [process_dir / f"{file_hash}.bin"]
+                    else:  # assume it's a list/iterable
+                        bin_files = [process_dir / f"{hash_val}.bin" for hash_val in file_hash]
+                    bin_files = [f for f in bin_files if f.exists()]
+                else:
+                    bin_files = list(process_dir.glob('*.bin'))
                 
                 for bin_file in bin_files:
                     # Extract hash from filename
@@ -342,6 +504,8 @@ class EntropyEvaluationPipeline:
     def create_restart_test_plan(self, device_id=None, process_names=None, file_hash=None):
         """
         Create an execution plan for restart tests based on existing test results.
+        You can either specify a specific device, process names, and/or file hash as lists of strings,
+        or leave them as None to process all devices, processes, and files.
         
         Args:
             device_id: Specific device (if None, all devices)
@@ -367,7 +531,8 @@ class EntropyEvaluationPipeline:
         if device_id:
             device_dirs = [self.output_base / device_id]
         else:
-            device_dirs = [d for d in self.output_base.iterdir() if d.is_dir()]
+            # Use presence of underscore to filter out "unstructured" directory
+            device_dirs = [d for d in self.output_base.iterdir() if d.is_dir() and '_' in d.name]
         
         for device_dir in device_dirs:
             current_device_id = device_dir.name
@@ -386,7 +551,10 @@ class EntropyEvaluationPipeline:
                 
                 # Filter files
                 if file_hash:
-                    bin_files = [process_dir / f"{file_hash}.bin"]
+                    if isinstance(file_hash, str):
+                        bin_files = [process_dir / f"{file_hash}.bin"]
+                    else:  # assume it's a list/iterable
+                        bin_files = [process_dir / f"{hash_val}.bin" for hash_val in file_hash]
                     bin_files = [f for f in bin_files if f.exists()]
                 else:
                     bin_files = list(process_dir.glob('*.bin'))
@@ -451,6 +619,215 @@ class EntropyEvaluationPipeline:
         
         return tasks
 
+    def run_restart_tests(self, tasks=None, device_id=None, process_names=None, 
+                        file_hash=None, skip_existing=True):
+        """
+        Run restart tests based on a task list or criteria.
+        
+        Args:
+            tasks: List of restart test tasks from create_restart_test_plan()
+                If None, will create task list using other parameters
+            device_id: Specific device (used if tasks is None)
+            process_names: Specific processes (used if tasks is None)
+            file_hash: Specific file hash (used if tasks is None)
+            skip_existing: Skip if restart test results already exist
+            
+        Returns:
+            dict: Summary of test results
+        """
+        # If no tasks provided, create them
+        if tasks is None:
+            self.logger.info("Creating restart test plan...")
+            tasks = self.create_restart_test_plan(device_id, process_names, file_hash)
+            
+        if not tasks:
+            self.logger.warning("No restart tests to run")
+            return {}
+        
+        self.logger.info(f"Running {len(tasks)} restart test sets")
+        
+        # Check if ea_restart binary exists
+        ea_restart = self.ea_path / 'ea_restart'
+        if not ea_restart.exists():
+            raise FileNotFoundError(f"ea_restart not found at {ea_restart}")
+        
+        summary = {
+            'total_tasks': len(tasks),
+            'completed': 0,
+            'skipped': 0,
+            'failed': 0,
+            'results': []
+        }
+        
+        for task_idx, task in enumerate(tasks):
+            self.logger.info(f"\nProcessing task {task_idx + 1}/{len(tasks)}: "
+                            f"{task['device_id']}/{task['process_name']}/{task['file_hash'][:12]}...")
+            
+            # Get metadata from the source test file
+            metadata_str = self._extract_metadata_from_test_results(task)
+            
+            # Process each restart file
+            task_results = {
+                'task': task,
+                'restart_results': []
+            }
+            
+            for i in range(task['num_restart_files']):
+                restart_file = task['restart_dir'] / f"{i}.bin"
+                
+                # Determine output path
+                results_dir = self.results_base / task['device_id'] / task['process_name'] / 'restart' / task['file_hash']
+                results_dir.mkdir(parents=True, exist_ok=True)
+                results_file = results_dir / f"{i}.txt"
+                
+                # Check if should skip
+                if results_file.exists() and skip_existing:
+                    self.logger.info(f"  Skipping restart file {i} - results already exist")
+                    summary['skipped'] += 1
+                    continue
+                
+                # Run restart test
+                result = self._run_single_restart_test(
+                    ea_restart, restart_file, task['test_flag'], 
+                    task['h_original'], results_file, metadata_str
+                )
+                
+                if result['success']:
+                    summary['completed'] += 1
+                    task_results['restart_results'].append(result)
+                    self.logger.info(f"  Restart file {i}: H_min = {result.get('h_final', 'N/A')}")
+                else:
+                    summary['failed'] += 1
+                    self.logger.error(f"  Restart file {i}: Failed")
+            
+            summary['results'].append(task_results)
+        
+        # Log summary
+        self.logger.debug(f"\nRestart test summary:")
+        self.logger.debug(f"  Total tasks: {summary['total_tasks']}")
+        self.logger.debug(f"  Completed tests: {summary['completed']}")
+        self.logger.debug(f"  Skipped tests: {summary['skipped']}")
+        self.logger.dbug(f"  Failed tests: {summary['failed']}")
+        
+        return summary
+
+    def _extract_metadata_from_test_results(self, task):
+        """
+        Extract metadata string from the source test results file.
+        
+        Args:
+            task: Task dictionary containing test information
+            
+        Returns:
+            str: Metadata string to include in restart test results
+        """
+        # Determine which test file to read from
+        test_type = task['source_test']  # 'iid' or 'non_iid'
+        source_results_file = (self.results_base / task['device_id'] / 
+                            task['process_name'] / test_type / 
+                            f"{task['file_hash']}.txt")
+        
+        if not source_results_file.exists():
+            self.logger.warning(f"Could not find source test file: {source_results_file}")
+            return "Metadata not available"
+        
+        try:
+            with open(source_results_file, 'r') as f:
+                content = f.read()
+            
+            # Extract the metadata section (between Return code and ===)
+            lines = content.split('\n')
+            metadata_lines = []
+            in_metadata = False
+            
+            for line in lines:
+                if line.startswith('Return code:'):
+                    in_metadata = True
+                    continue
+                # WARNING: This assumes the metadata section ends with a line of 80 equals signs.
+                elif line.startswith('=' * 80):
+                    break
+                elif in_metadata and line.strip():
+                    metadata_lines.append(line)
+            
+            return '\n'.join(metadata_lines)
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting metadata: {e}")
+            return "Error extracting metadata"
+
+    def _run_single_restart_test(self, ea_restart, restart_file, test_flag, 
+                                h_original, results_file, metadata_str):
+        """
+        Run a single restart test and save results.
+        
+        Args:
+            ea_restart: Path to ea_restart binary
+            restart_file: Path to restart sample file
+            test_flag: '-i' or '-n'
+            h_original: Original entropy value
+            results_file: Path to save results
+            metadata_str: Metadata string to include in results
+            
+        Returns:
+            dict: Result information including success status
+        """
+        # Construct command
+        cmd = [str(ea_restart), test_flag, '-v', str(restart_file), '1', f"{h_original:.6f}"]
+        
+        self.logger.debug(f"Running command: {' '.join(cmd)}")
+        
+        try:
+            start_time = datetime.now()
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            # Save results with header similar to iid/non_iid tests
+            with open(results_file, 'w') as f:
+                f.write(f"Command: {' '.join(cmd)}\n")
+                f.write(f"Duration: {duration:.2f} seconds\n")
+                f.write(f"Return code: {result.returncode}\n")
+                f.write(metadata_str)
+                f.write("\n" + "="*80 + "\n")
+                f.write(result.stdout)
+                if result.stderr:
+                    f.write("\n" + "="*80 + "\n")
+                    f.write("STDERR:\n")
+                    f.write(result.stderr)
+            
+            # Check that validation test passed
+            validation_passed = False
+            if 'Validation Test Passed' in result.stdout:
+                validation_passed = True
+                self.logger.debug("Validation test passed")
+
+            # Extract H_original from output for logging
+            h_value = None
+            if 'min(H_r, H_c, H_I):' in result.stdout:
+                h_line = result.stdout.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
+                try:
+                    h_value = float(h_line)
+                except ValueError:
+                    pass
+            
+            return {
+                'success': result.returncode == 0,
+                'validation_passed': validation_passed,
+                'duration': duration,
+                'h_final': h_value,
+                'file': str(restart_file)
+            }
+            
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Restart test timed out after 60 minutes")
+            with open(results_file, 'w') as f:
+                f.write(f"Command: {' '.join(cmd)}\n")
+                f.write("ERROR: Test timed out after 60 minutes\n")
+            return {'success': False, 'error': 'timeout'}
+        
+        except Exception as e:
+            self.logger.error(f"Error running restart test: {e}")
+            return {'success': False, 'error': str(e)}
 
     def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
         """Run entropy test and save results"""
