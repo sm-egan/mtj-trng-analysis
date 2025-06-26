@@ -707,7 +707,7 @@ class EntropyEvaluationPipeline:
         self.logger.debug(f"  Total tasks: {summary['total_tasks']}")
         self.logger.debug(f"  Completed tests: {summary['completed']}")
         self.logger.debug(f"  Skipped tests: {summary['skipped']}")
-        self.logger.dbug(f"  Failed tests: {summary['failed']}")
+        self.logger.debug(f"  Failed tests: {summary['failed']}")
         
         return summary
 
@@ -932,3 +932,403 @@ class EntropyEvaluationPipeline:
             self.logger.error(f"Test timed out after 120 minutes")
             with open(results_file, 'w') as f:
                 f.write("ERROR: Test timed out after 120 minutes\n")
+
+    def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None):
+        """
+        Collect entropy test results from all test files and compile into a CSV.
+        
+        Args:
+            device_id: Specific device to process (if None, all devices)
+            process_names: Specific processes to include (if None, all processes)
+            output_csv: Path to output CSV file (if None, returns DataFrame)
+            
+        Returns:
+            pd.DataFrame: DataFrame with entropy results
+        """
+        import pandas as pd
+        from pathlib import Path
+        
+        results_list = []
+        
+        # Determine scope
+        if device_id:
+            device_dirs = [self.results_base / device_id]
+        else:
+            device_dirs = [d for d in self.results_base.iterdir() if d.is_dir() and d.name.split('_')[0].isdigit()]
+
+        if process_names:
+            if isinstance(process_names, str):
+                process_names = [process_names]
+        
+        # Through device directories
+        for device_dir in device_dirs:
+            current_device = device_dir.name
+            
+            # Filter processes
+            if process_names:
+                process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
+            else:
+                process_dirs = [d for d in device_dir.iterdir() if d.is_dir()]
+            
+            # Glob all the file hashes that have results from the raw/non_iid directory
+            for process_dir in process_dirs:
+                current_process = process_dir.name
+
+                # Get all unique file hashes for this device and process
+                ## device, process, and file_hash uniquely specify a row in the DataFrame/csv
+                file_hashes = self._get_unique_hashes(process_dir)
+                for file_hash in file_hashes:
+                    # Initialize result dictionary. Results for all test types will be aggregated here
+                    result = {
+                        'device': current_device,
+                        'processing': current_process,
+                        'raw_hash': file_hash,
+                        'switching_probability': None,
+                        's_amplitude': None,
+                        's_width': None,
+                        'r_amplitude': None,
+                        'r_width': None,
+                        'field': None,
+                        'iid_pass': None,
+                        'restart_pass': None,
+                        'h_original_iid': None,
+                        'h_original_non_iid': None,
+                        'h_final': None
+                    }
+                    
+                    get_metadata = True
+                    for test_type in ['iid', 'non_iid', 'restart']:
+                        test_dir = process_dir / test_type
+                        test_file = test_dir / f"{file_hash}.txt"
+                        
+                        if not test_file.exists():
+                            self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
+                            continue
+                        
+                        # Parse IID and non-IID results
+                        if test_type in ['iid', 'non_iid']:
+                            # Only get metadata if it's the first time parsing this file
+                            parsed_result, metadata_found = self._parse_iid_non_iid_result_file(test_file, test_type=test_type, find_metadata=get_metadata)
+                            # if _parse_iid_non_iid_result_file returned metadata_found, we can skip it next time
+                            get_metadata = not metadata_found
+                            if parsed_result:
+                                result.update(parsed_result)
+                        elif test_type == 'restart':
+                            parsed_result = self._parse_restart_results(test_dir / file_hash)
+                            if parsed_result:
+                                result.update(parsed_result)
+                    
+
+                #Parse each test type
+                # TO DO: parse 'iid' and 'non_iid' in same loop so that results are all in same row
+                # for test_type in ['iid', 'non_iid', 'restart']:
+                #     test_dir = process_dir / test_type
+                #     if not test_dir.exists():
+                #         continue
+                    
+                #     if test_type == 'restart':
+                #         # Process restart tests differently - aggregate by hash
+                #         for hash_dir in test_dir.iterdir():
+                #             if hash_dir.is_dir():
+                #                 # Get all restart files for this hash
+                #                 restart_files = sorted(hash_dir.glob('*.txt'))
+                #                 if restart_files:
+                #                     # Process all restart files to find minimum entropy
+                #                     min_h = float('inf')
+                #                     all_passed = True
+                                    
+                #                     for restart_file in restart_files:
+                #                         try:
+                #                             with open(restart_file, 'r') as f:
+                #                                 content = f.read()
+                                            
+                #                             # Check pass/fail
+                #                             if 'Failed' in content:
+                #                                 all_passed = False
+                                            
+                #                             # Extract H_original
+                #                             if 'min(H_r, H_c, H_I): ' in content:
+                #                                 h_line = content.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
+                #                                 try:
+                #                                     h_value = float(h_line)
+                #                                     min_h = min(min_h, h_value)
+                #                                 except ValueError:
+                #                                     pass
+                #                         except Exception as e:
+                #                             self.logger.error(f"Error reading {restart_file}: {e}")
+                                    
+                #                     # Find corresponding base result to update
+                #                     file_hash = hash_dir.name
+                #                     # Look for existing result with this hash
+                #                     for i, res in enumerate(results):
+                #                         if (res.get('raw_hash') == file_hash and 
+                #                             res.get('device') == current_device and
+                #                             res.get('processing') == current_process):
+                #                             # Update with restart results
+                #                             results[i]['restart_pass'] = all_passed
+                #                             if min_h != float('inf'):
+                #                                 results[i]['h_final'] = min_h
+                #                             break
+                #                     else:
+                #                         # No existing result found, this shouldn't happen if tests run in order
+                #                         self.logger.warning(f"No base result found for restart test {file_hash}")
+                #     else:
+                #         # IID and non-IID tests
+                #         for result_file in test_dir.glob('*.txt'):
+
+                #             result = self._parse_iid_non_iid_result_file(result_file)
+                            
+                #             if result:
+                #                 results.append(result)
+        
+        # Create DataFrame
+        df = pd.DataFrame(results_list).sort_values(by=['device', 'processing', 'raw_hash'])
+        
+        # Reorder columns to match the expected format
+        column_order = [
+            'device', 'processing', 'raw_hash',
+            'switching_probability', 's_amplitude', 's_width', 
+            'r_amplitude', 'r_width', 'field', 'iid_pass', 'restart_pass',
+            'h_original_iid', 'h_original_non_iid', 'h_final'
+        ]
+        
+        # Add missing columns with NaN
+        for col in column_order:
+            if col not in df.columns:
+                df[col] = pd.NA
+        
+        # Reorder and select columns
+        df = df[column_order]
+        
+        # Save to CSV if path provided
+        if output_csv:
+            df.to_csv(output_csv, index=False)
+            self.logger.info(f"Saved {len(df)} results to {output_csv}")
+        
+        return df
+
+    def _get_unique_hashes(device_dir):
+        device_path = Path(device_dir)
+        processing_levels = ['raw', 'xor2', 'xor4', 'xor8']
+        test_types = ['iid', 'non_iid']
+        
+        all_hashes = set()
+        
+        for proc_level in processing_levels:
+            for test_type in test_types:
+                dir_path = device_dir / proc_level / test_type
+                
+                if not dir_path.exists():
+                    continue
+                
+                # Convert generator to set of stems, then union
+                dir_hashes = {txt_file.stem for txt_file in dir_path.glob('*.txt')}
+                all_hashes |= dir_hashes  # Union operator
+        
+        return sorted(list(all_hashes))
+
+    def _parse_iid_non_iid_result_file(self, result_file, test_type=None, find_metadata=False):
+        """
+        Parse a single IID or non-IID test result file.
+        
+        Args:
+            txtfile: Path to the result file
+            test_type: 'iid' or 'non_iid' (optional, used for logging)
+            find_metadata: If True, extract metadata from the file
+        Returns:
+            dict: Parsed results or None if parsing fails
+        """
+        try:
+            with open(result_file, 'r') as f:
+                content = f.read()
+
+            result = {}
+
+            if not test_type:
+                test_type = 'iid' if 'ea_iid' in content else 'non_iid'
+            
+            h_original = None
+            if 'H_original:' in content:
+                h_line = content.split('H_original:')[1].split('\n')[0].strip()
+                try:
+                    h_original = float(h_line)
+                except ValueError:
+                    self.logger.warning(f"Could not parse H_original value: {h_line}")
+                    return None       
+
+            if test_type == 'iid':
+                result['iid_pass'] = 'Passed' in content and 'Failed' not in content
+                result['h_original_iid'] = h_original
+            elif test_type == 'non_iid':
+                result['h_original_non_iid'] = h_original
+            else:
+                self.logger.warning(f"Unknown test type: {test_type}")
+                return None
+            
+            if find_metadata:
+                metadata = self._parse_entropy_result_for_metadata(content)
+                if metadata:
+                    result.update(metadata)
+                    return result, True
+                else:
+                    self.logger.warning(f"Could not extract metadata from {result_file}")
+                    return result, False
+            else:
+                return result, False
+        except Exception as e:
+            self.logger.error(f"Error parsing {result_file}: {e}")
+            return None
+    
+    def _parse_restart_results(self, restart_result_dir):
+        """
+        Parse all restart test results in a directory.
+        
+        Args:
+            result_dir: Path to the directory containing restart test results
+            get_metadata: If True, extract metadata from the results
+            
+        Returns:
+            list: List of parsed results
+        """
+        result = {}
+        if not restart_result_dir.exists():
+            self.logger.warning(f"Restart result directory does not exist: {restart_result_dir}")
+            return None
+        
+        # Get all restart files for this hash
+        restart_files = sorted(restart_result_dir.glob('*.txt'))
+        if restart_files:
+            # Process all restart files to find minimum entropy
+            min_h = float('inf')
+            all_passed = True
+            
+            for restart_file in restart_files:
+                try:
+                    with open(restart_file, 'r') as f:
+                        content = f.read()
+                    
+                    # Check pass/fail
+                    if 'Failed' in content:
+                        all_passed = False
+                    
+                    # Extract min entropy
+                    if 'min(H_r, H_c, H_I): ' in content:
+                        h_line = content.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
+                        try:
+                            h_value = float(h_line)
+                            min_h = min(min_h, h_value)
+                        except ValueError:
+                            pass
+                except Exception as e:
+                    self.logger.error(f"Error reading {restart_file}: {e}")
+
+            else:
+                # No existing result found, this shouldn't happen if tests run in order
+                self.logger.warning(f"No base result found for restart test at {restart_result_dir}")
+        else:
+            self.logger.warning(f"No restart files found in {restart_result_dir}")
+            return None
+
+        if min_h != float('inf'):
+            result['h_final'] = min_h
+            result['restart_pass'] = all_passed
+        else:
+            self.logger.warning(f"No valid H values found in restart files for {restart_result_dir}")
+            return None
+        
+        return result
+        
+    def _parse_entropy_result_for_metadata(self, file_content):
+        """        Extract metadata from the content of an entropy test result file."""
+        # Extract metadata (switching probability and parameters)
+        metadata_match = False
+        result = {}
+        for line in file_content.split('\n'):
+            if "('s_amplitude'," in line and 'switching_probability' in line:
+                metadata_match = True
+                continue
+            if metadata_match and line.startswith('(') and line.endswith(')'):
+                # Parse the tuple
+                try:
+                    values = eval(line)  # Safe here as we control the format
+                    result['s_amplitude'] = values[0]
+                    result['s_width'] = values[1]
+                    result['r_amplitude'] = values[2]
+                    result['r_width'] = values[3]
+                    result['field'] = values[4]
+                    result['switching_probability'] = values[5]
+                except:
+                    self.logger.warning(f"Could not parse metadata")
+                break
+        if len(result) > 0:
+            self.logger.debug(f"Extracted metadata: {result}")
+            return result
+        else:
+            return None
+
+    # def _parse_entropy_result_file(self, result_file, device_id, process_name, 
+    #                             test_type, file_hash):
+    #     """
+    #     Parse a single entropy test result file.
+        
+    #     Returns:
+    #         dict: Parsed results or None if parsing fails
+    #     """
+    #     try:
+    #         with open(result_file, 'r') as f:
+    #             content = f.read()
+            
+    #         result = {
+    #             'device': device_id,
+    #             'processing': process_name,
+    #             'raw_hash': file_hash
+    #         }
+            
+    #         # Extract metadata (switching probability and parameters)
+    #         metadata_match = False
+    #         for line in content.split('\n'):
+    #             if "('s_amplitude'," in line and 'switching_probability' in line:
+    #                 metadata_match = True
+    #                 continue
+    #             if metadata_match and line.startswith('(') and line.endswith(')'):
+    #                 # Parse the tuple
+    #                 try:
+    #                     values = eval(line)  # Safe here as we control the format
+    #                     result['s_amplitude'] = values[0]
+    #                     result['s_width'] = values[1]
+    #                     result['r_amplitude'] = values[2]
+    #                     result['r_width'] = values[3]
+    #                     result['field'] = values[4]
+    #                     result['switching_probability'] = values[5]
+    #                 except:
+    #                     self.logger.warning(f"Could not parse metadata from {result_file}")
+    #                 break
+            
+    #         # Extract H_original
+    #         h_original = None
+    #         if 'H_original:' in content:
+    #             h_line = content.split('H_original:')[1].split('\n')[0].strip()
+    #             try:
+    #                 h_original = float(h_line)
+    #             except ValueError:
+    #                 pass
+            
+    #         # Extract pass/fail status
+    #         passed = 'Failed' not in content and 'Passed' in content
+            
+    #         # Populate test-specific fields
+    #         if test_type == 'iid':
+    #             result['iid_pass'] = passed
+    #             result['h_original_iid'] = h_original
+    #         elif test_type == 'non_iid':
+    #             result['h_original_non_iid'] = h_original
+    #         elif test_type == 'restart':
+    #             # For restart tests, we only return if this is a summary (restart_id is None)
+    #             # Individual restart files will be processed separately
+    #             return None
+            
+    #         return result
+            
+    #     except Exception as e:
+    #         self.logger.error(f"Error parsing {result_file}: {e}")
+    #         return None

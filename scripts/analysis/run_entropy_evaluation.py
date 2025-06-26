@@ -80,7 +80,7 @@ if __name__ == "__main__":
         # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
         ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
         polars_expr=(pl.col("r_amplitude") == -0.7) & (pl.col("s_amplitude") == 5.96) & (pl.col("s_width") == 1e-8) & (pl.col("row_number") < 308),
-        tests=['non_iid', 'iid'],
+        tests=['non_iid', 'iid', 'restart'],
         skip_existing=False
     )
 
@@ -101,10 +101,6 @@ if __name__ == "__main__":
     # )
     ###################################################
     # Create restart files for device 011_08
-
-    summary = pipeline.export_restart_binaries(
-        device_id="011_08"
-    )
 
     #tasks = pipeline.create_restart_test_plan(device_id='011_08',file_hash='90c7317d8d67d14414f2ae742e8c60e63cfa8c7b403e216493f3ba36db77b5d0')
     #print(tasks)
