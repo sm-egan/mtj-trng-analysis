@@ -45,68 +45,6 @@ class EntropyEvaluationPipeline:
         )
         self.logger = logging.getLogger(__name__)
     
-    # def evaluate_entropy(self, 
-    #                     device_id: str,
-    #                     polars_expr: Optional[pl.Expr] = None,
-    #                     run_ids: Optional[List[str]] = None,
-    #                     xor_levels: List[int] = [1, 2, 4, 8],
-    #                     skip_existing: bool = True,
-    #                     tests: List[str] = ['non_iid', 'iid']):
-    #     """
-    #     Evaluate entropy for a specific device
-        
-    #     Args:
-    #         device_id: Device ID to process (e.g., "07_08")
-    #         polars_expr: Polars expression for filtering runs
-    #         run_ids: List of specific run IDs (must be pre-sorted by row_number!)
-    #         xor_levels: List of XOR whitening levels (1 means raw)
-    #         skip_existing: Skip if output files already exist
-    #         tests: Which tests to run ('iid', 'non_iid')
-            
-    #     Example:
-    #         pipeline.evaluate_entropy(
-    #             device_id="07_08",
-    #             polars_expr=(pl.col("field") == 10.0),
-    #             xor_levels=[1, 2, 4, 8]
-    #         )
-    #     """
-    #     # Get binary data
-    #     binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
-    #     if binary_data is None:
-    #         self.logger.warning("No data found matching criteria")
-    #         return
-
-        
-    #     self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
-        
-
-    #     # Set test as outer loop, since non-iid tests runs much faster you don't have to wait for results
-    #     for test in tests:
-    #         for xor_n in xor_levels:                
-    #             if xor_n == 1:
-    #                 process_name = "raw"
-    #             else:
-    #                 process_name = f"xor{xor_n}"
-
-    #             # Kind of hacky/repetitive with export_binary, fix later. Construct bin_file the same way as export_binary in order to check if the target file already exists
-    #             ## Added this when I reversed order of test and xor loop
-    #             bin_dir = self.output_base / device_id / process_name            
-    #             bin_file = bin_dir / f"{raw_hash}.bin"
-
-    #             if not (bin_file.exists() and skip_existing):
-    #                 if process_name == "raw":
-    #                     processed_data = binary_data
-    #                 else:
-    #                     self.logger.info(f"Applying XOR-{xor_n} whitening")
-    #                     processed_data = xorn_whitening(binary_data, n=xor_n)
-
-    #                 self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
-    #                 # Export binary file
-    #                 bin_file = self.export_binary(device_id, process_name, processed_data, 
-    #                                              raw_hash, skip_existing)
-
-    #             self.run_test(device_id, process_name, bin_file, raw_hash, 
-    #                              test, skip_existing, metadata_str)
 
     def evaluate_entropy(self, 
                         device_id: str,
@@ -969,14 +907,17 @@ class EntropyEvaluationPipeline:
                 process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
             else:
                 process_dirs = [d for d in device_dir.iterdir() if d.is_dir()]
-            
-            # Glob all the file hashes that have results from the raw/non_iid directory
+
+            file_hashes = self._get_unique_hashes(device_dir)
+            self.logger.info(f"Found {len(file_hashes)} unique file hashes for Device {current_device}: {file_hashes}")
+
             for process_dir in process_dirs:
                 current_process = process_dir.name
 
                 # Get all unique file hashes for this device and process
                 ## device, process, and file_hash uniquely specify a row in the DataFrame/csv
-                file_hashes = self._get_unique_hashes(process_dir)
+                self.logger.info(f"Processing {process_dir}")
+
                 for file_hash in file_hashes:
                     # Initialize result dictionary. Results for all test types will be aggregated here
                     result = {
@@ -999,25 +940,42 @@ class EntropyEvaluationPipeline:
                     get_metadata = True
                     for test_type in ['iid', 'non_iid', 'restart']:
                         test_dir = process_dir / test_type
-                        test_file = test_dir / f"{file_hash}.txt"
-                        
-                        if not test_file.exists():
-                            self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
+                        if not test_dir.exists():
+                            self.logger.warning(f"Test type {test_type} directory does not exist for {test_dir}. Skipping...")
                             continue
-                        
+
                         # Parse IID and non-IID results
                         if test_type in ['iid', 'non_iid']:
+                            test_file = test_dir / f"{file_hash}.txt"
+
+                            if not test_file.exists():
+                                self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
+                                continue
+
                             # Only get metadata if it's the first time parsing this file
                             parsed_result, metadata_found = self._parse_iid_non_iid_result_file(test_file, test_type=test_type, find_metadata=get_metadata)
                             # if _parse_iid_non_iid_result_file returned metadata_found, we can skip it next time
                             get_metadata = not metadata_found
+                            
                             if parsed_result:
                                 result.update(parsed_result)
+                                self.logger.info(f"{test_type.capitalize()} results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+                        
                         elif test_type == 'restart':
+                            restart_dir = test_dir / file_hash
+                            if not restart_dir.exists():
+                                self.logger.warning(f"Missing restart results for {current_device}/{current_process}/{file_hash}...")
+                                continue
+
                             parsed_result = self._parse_restart_results(test_dir / file_hash)
+                            self.logger.debug(f"Parsed restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                             if parsed_result:
                                 result.update(parsed_result)
+                                self.logger.info(f"Restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                     
+                    #self.logger.debug(f"Parsed result for {test_file}: {result}")
+                    # Add result to the list
+                    results_list.append(result)
 
                 #Parse each test type
                 # TO DO: parse 'iid' and 'non_iid' in same loop so that results are all in same row
@@ -1082,7 +1040,7 @@ class EntropyEvaluationPipeline:
                 #                 results.append(result)
         
         # Create DataFrame
-        df = pd.DataFrame(results_list).sort_values(by=['device', 'processing', 'raw_hash'])
+        df = pd.DataFrame(results_list).sort_values(by=['device', 'r_amplitude', 'r_width', 'processing', 'switching_probability'])
         
         # Reorder columns to match the expected format
         column_order = [
@@ -1107,7 +1065,7 @@ class EntropyEvaluationPipeline:
         
         return df
 
-    def _get_unique_hashes(device_dir):
+    def _get_unique_hashes(self, device_dir):
         device_path = Path(device_dir)
         processing_levels = ['raw', 'xor2', 'xor4', 'xor8']
         test_types = ['iid', 'non_iid']
@@ -1116,7 +1074,7 @@ class EntropyEvaluationPipeline:
         
         for proc_level in processing_levels:
             for test_type in test_types:
-                dir_path = device_dir / proc_level / test_type
+                dir_path = device_path / proc_level / test_type
                 
                 if not dir_path.exists():
                     continue
@@ -1197,6 +1155,7 @@ class EntropyEvaluationPipeline:
         
         # Get all restart files for this hash
         restart_files = sorted(restart_result_dir.glob('*.txt'))
+        self.logger.info(f"Found {len(restart_files)} restart files in {restart_result_dir}")
         if restart_files:
             # Process all restart files to find minimum entropy
             min_h = float('inf')
@@ -1222,9 +1181,6 @@ class EntropyEvaluationPipeline:
                 except Exception as e:
                     self.logger.error(f"Error reading {restart_file}: {e}")
 
-            else:
-                # No existing result found, this shouldn't happen if tests run in order
-                self.logger.warning(f"No base result found for restart test at {restart_result_dir}")
         else:
             self.logger.warning(f"No restart files found in {restart_result_dir}")
             return None

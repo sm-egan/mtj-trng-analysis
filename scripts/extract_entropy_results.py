@@ -84,12 +84,12 @@ def main():
         if 'iid_pass' in df.columns:
             print(f"\nIID test results:")
             print(f"  Passed: {df['iid_pass'].sum()}")
-            print(f"  Failed: {(~df['iid_pass']).sum()}")
+            print(f"  Failed: {(not df['iid_pass']).sum()}")
         
         if 'restart_pass' in df.columns and df['restart_pass'].notna().any():
             print(f"\nRestart test results:")
             print(f"  Passed: {df['restart_pass'].sum()}")
-            print(f"  Failed: {(~df['restart_pass']).sum()}")
+            print(f"  Failed: {(not df['restart_pass']).sum()}")
 
 
 if __name__ == "__main__":
