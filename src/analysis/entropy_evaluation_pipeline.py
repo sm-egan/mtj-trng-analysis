@@ -1168,7 +1168,7 @@ class EntropyEvaluationPipeline:
                     
                     # Check pass/fail
                     if 'Failed' in content:
-                        all_passed = False
+                        all_passed = False #TO DO: IF THIS HAPPENS AND WE'RE DOING IID TESTS WE SHOULD SWITCH TO NON-IID
                     
                     # Extract min entropy
                     if 'min(H_r, H_c, H_I): ' in content:

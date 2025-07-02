@@ -11,8 +11,9 @@ __all__ = [
 ]
 
 def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, 
-                          binomial_pdf=True, align='left', title=None, ax=None, 
-                          fontsize=14, hide_ylabel=False):
+                          binomial_pdf=True, binomial_p=None, density=True, align='left', title=None, ax=None, 
+                          fontsize=14, hide_ylabel=False, show_plot=True, show_legend=False, show_std=True,
+                          color='b', alpha=0.8, label=None):
     """
     Plot histogram of binomial data with optional binomial PDF overlay.
     
@@ -28,9 +29,10 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     # Create figure/axis if not provided
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
-        show_plot = True
+        meanstd_color = 'r' #set color differently if there is only one histogram on the axis
     else:
         fig = ax.get_figure()
+        meanstd_color = color
         show_plot = False
     
     if plot_probabilities and np.all(values >= 1):
@@ -44,10 +46,12 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     if not bins and not plot_probabilities:
         bins = np.arange(np.min(values), np.max(values)+1)
     
-    density = binomial_pdf
-    
-    n, _, _ = ax.hist(values, bins=bins, alpha=0.7, color='blue', 
-                      align='left', density=density)
+    if color:
+        n, _, _ = ax.hist(values, bins=bins, alpha=alpha, color=color, 
+                        align='left', density=density)
+    else:
+        n, _, _ = ax.hist(values, bins=bins, alpha=alpha, 
+                        align='left', density=density)
     
     # Set labels and title
     if plot_probabilities:
@@ -55,19 +59,21 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             ax.set_title(f'Histogram of switching probability over {str(ntrials)} trials', 
                         fontsize=fontsize)
         ax.set_xlabel('Switching probability', fontsize=fontsize)
-        ax.axvline(mean, color='r', linestyle='dashed', linewidth=1, 
+        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=1, 
                    label=f'Mean = {mean:.3f}')
-        ax.axvspan(mean - std, mean + std, color='r', alpha=0.2, 
-                   label=f'Std = {std:.3f}')
+        if show_std:
+            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
+                    label=f'Std = {std:.3f}')
     else:
         if title is None:
             ax.set_title(f'Histogram of successful switching attempts over {str(ntrials)} trials',
                         fontsize=fontsize)
         ax.set_xlabel('Successes', fontsize=fontsize)
-        ax.axvline(mean, color='r', linestyle='dashed', linewidth=3, 
+        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=3, 
                    label=f'Mean = {mean:.3f}')
-        ax.axvspan(mean - std, mean + std, color='r', alpha=0.2, 
-                   label=f'Std = {std:.3f}')
+        if show_std:
+            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
+                    label=f'Std = {std:.3f}')
     
     if title is not None:
         ax.set_title(title, fontsize=fontsize)
@@ -84,7 +90,10 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             
         if hasattr(bins_for_pdf, '__len__'):
             prefactor = comb(ntrials, bins_for_pdf)
-            p = mean / ntrials if not plot_probabilities else mean
+            if binomial_p:
+                p = binomial_p
+            else:
+                p = mean / ntrials if not plot_probabilities else mean
             pdf = prefactor * (np.power(p, bins_for_pdf) * np.power(1 - p, ntrials - bins_for_pdf))
             ax.plot(bins_for_pdf if plot_probabilities else bins, pdf * np.sum(n), 
                     'k-.', label=f'Binomial pdf: n={ntrials}, p={p:.3f}', linewidth=5)

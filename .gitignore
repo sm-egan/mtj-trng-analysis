@@ -47,3 +47,4 @@ notebooks/prng.ipynb
 
 # Entropy source validation results
 esv/
+plots_data/

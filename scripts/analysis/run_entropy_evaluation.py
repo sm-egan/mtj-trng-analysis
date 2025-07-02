@@ -113,19 +113,6 @@ if __name__ == "__main__":
                 skip_existing=True
             )
 
-        pipeline.evaluate_entropy(
-            device_id="011_08",
-            # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
-            ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
-            polars_expr=(
-                    pl.col("r_amplitude") == r_amplitude_V) 
-                    & (pl.col("s_amplitude") == 5.96) 
-                    & (pl.col("s_width") == 1e-8) 
-                    & (pl.col("row_number") < 426),
-            tests=['non_iid', 'iid', 'restart'],
-            skip_existing=True
-        )
-
     # pipeline.evaluate_entropy(
     #     device_id="023_07",
     #     polars_expr=(pl.col("row_number") == 290),
