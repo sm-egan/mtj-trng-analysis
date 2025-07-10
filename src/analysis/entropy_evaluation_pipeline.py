@@ -51,6 +51,7 @@ class EntropyEvaluationPipeline:
                         polars_expr: Optional[pl.Expr] = None,
                         run_ids: Optional[List[str]] = None,
                         xor_levels: List[int] = [1, 2, 4, 8],
+                        xor_method: str = "nonoverlapping",
                         skip_existing: bool = True,
                         tests: List[str] = ['non_iid', 'iid']):
         """
@@ -116,6 +117,8 @@ class EntropyEvaluationPipeline:
                         process_name = "raw"
                     else:
                         process_name = f"xor{xor_n}"
+                        if xor_method == "rolling":
+                            process_name = process_name + "_r"
 
                     # Store hash for each process level
                     process_hashes[process_name] = raw_hash
@@ -128,7 +131,7 @@ class EntropyEvaluationPipeline:
                             processed_data = binary_data
                         else:
                             self.logger.info(f"Applying XOR-{xor_n} whitening")
-                            processed_data = xorn_whitening(binary_data, n=xor_n)
+                            processed_data = xorn_whitening(binary_data, n=xor_n, method=xor_method)
 
                         self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
                         # Export binary file
@@ -636,7 +639,7 @@ class EntropyEvaluationPipeline:
                     self.logger.info(f"  Restart file {i}: H_min = {result.get('h_final', 'N/A')}")
                 else:
                     summary['failed'] += 1
-                    self.logger.error(f"  Restart file {i}: Failed")
+                    self.logger.error(f"  Restart file {i}: Error running restart test")
             
             summary['results'].append(task_results)
         
@@ -648,52 +651,7 @@ class EntropyEvaluationPipeline:
         self.logger.debug(f"  Failed tests: {summary['failed']}")
         
         return summary
-
-    def _extract_metadata_from_test_results(self, task):
-        """
-        Extract metadata string from the source test results file.
-        
-        Args:
-            task: Task dictionary containing test information
-            
-        Returns:
-            str: Metadata string to include in restart test results
-        """
-        # Determine which test file to read from
-        test_type = task['source_test']  # 'iid' or 'non_iid'
-        source_results_file = (self.results_base / task['device_id'] / 
-                            task['process_name'] / test_type / 
-                            f"{task['file_hash']}.txt")
-        
-        if not source_results_file.exists():
-            self.logger.warning(f"Could not find source test file: {source_results_file}")
-            return "Metadata not available"
-        
-        try:
-            with open(source_results_file, 'r') as f:
-                content = f.read()
-            
-            # Extract the metadata section (between Return code and ===)
-            lines = content.split('\n')
-            metadata_lines = []
-            in_metadata = False
-            
-            for line in lines:
-                if line.startswith('Return code:'):
-                    in_metadata = True
-                    continue
-                # WARNING: This assumes the metadata section ends with a line of 80 equals signs.
-                elif line.startswith('=' * 80):
-                    break
-                elif in_metadata and line.strip():
-                    metadata_lines.append(line)
-            
-            return '\n'.join(metadata_lines)
-            
-        except Exception as e:
-            self.logger.error(f"Error extracting metadata: {e}")
-            return "Error extracting metadata"
-
+    
     def _run_single_restart_test(self, ea_restart, restart_file, test_flag, 
                                 h_original, results_file, metadata_str):
         """
@@ -716,56 +674,111 @@ class EntropyEvaluationPipeline:
         self.logger.debug(f"Running command: {' '.join(cmd)}")
         
         try:
+            # start_time = datetime.now()
+            # result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            # duration = (datetime.now() - start_time).total_seconds()
+
             start_time = datetime.now()
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            
+            if test_flag == '-i':
+                # For IID tests: monitor for failures and filter progress lines
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                         text=True, bufsize=1)
+                
+                output_lines = []
+                last_progress_line = None
+                failed = False
+                
+                # Read output line by line
+                for line in process.stdout:
+                    line = line.rstrip()
+                    
+                    # Check for failure
+                    if '** Failed' in line:
+                        self.logger.warning(f"  IID test failed: {line}")
+                        output_lines.append(line)
+                        failed = True
+                        process.terminate()
+                        break
+                    
+                    # Filter progress lines
+                    if '% of Permutation test rounds' in line and '% of Permutation tests' in line:
+                        last_progress_line = line
+                    else:
+                        # Add the last progress line before non-progress content
+                        if last_progress_line is not None:
+                            output_lines.append(last_progress_line)
+                            last_progress_line = None
+                        output_lines.append(line)
+
+                    if 'Passed IID permutation tests' in line:
+                        self.logger.info(f"    IID tests passed: {line}")
+                
+                # Add final progress line if it exists
+                if last_progress_line is not None:
+                    output_lines.append(last_progress_line)
+                
+                # Wait for process to finish
+                process.wait()
+                stderr = process.stderr.read() if process.stderr else ""
+                
+                # Prepare output
+                filtered_output = '\n'.join(output_lines)
+                if failed:
+                    filtered_output += "\n\n[Test terminated early due to failure]"
+                
+                result_returncode = process.returncode
+                result_stderr = stderr
+                
+            else:
+                # For non-IID tests: run normally without filtering
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+                filtered_output = result.stdout
+                result_returncode = result.returncode
+                result_stderr = result.stderr
+            
             duration = (datetime.now() - start_time).total_seconds()
             
             # Save results with header similar to iid/non_iid tests
             with open(results_file, 'w') as f:
                 f.write(f"Command: {' '.join(cmd)}\n")
                 f.write(f"Duration: {duration:.2f} seconds\n")
-                f.write(f"Return code: {result.returncode}\n")
+                f.write(f"Return code: {result_returncode}\n")
                 f.write(metadata_str)
                 f.write("\n" + "="*80 + "\n")
-                f.write(result.stdout)
-                if result.stderr:
+                f.write(filtered_output)
+                if result_stderr:
                     f.write("\n" + "="*80 + "\n")
                     f.write("STDERR:\n")
-                    f.write(result.stderr)
+                    f.write(result_stderr)
             
             # Check that validation test passed
             validation_passed = False
-            if 'Validation Test Passed' in result.stdout:
+            if 'Validation Test Passed' in filtered_output:
                 validation_passed = True
                 self.logger.debug("Validation test passed")
 
             # Extract H_original from output for logging
             h_value = None
-            if 'min(H_r, H_c, H_I):' in result.stdout:
-                h_line = result.stdout.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
+            if 'min(H_r, H_c, H_I):' in filtered_output:
+                h_line = filtered_output.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
                 try:
                     h_value = float(h_line)
                 except ValueError:
                     pass
             
             return {
-                'success': result.returncode == 0,
+                'success': result_returncode == 0,
                 'validation_passed': validation_passed,
                 'duration': duration,
                 'h_final': h_value,
                 'file': str(restart_file)
-            }
-            
-        except subprocess.TimeoutExpired:
-            self.logger.error(f"Restart test timed out after 60 minutes")
-            with open(results_file, 'w') as f:
-                f.write(f"Command: {' '.join(cmd)}\n")
-                f.write("ERROR: Test timed out after 60 minutes\n")
-            return {'success': False, 'error': 'timeout'}
         
+            }
         except Exception as e:
             self.logger.error(f"Error running restart test: {e}")
             return {'success': False, 'error': str(e)}
+        
 
     def run_test(self, device_id, process_name, bin_file, raw_hash, test_type, skip_existing, metadata_str):
         """Run entropy test and save results"""
@@ -871,7 +884,53 @@ class EntropyEvaluationPipeline:
             with open(results_file, 'w') as f:
                 f.write("ERROR: Test timed out after 120 minutes\n")
 
-    def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None):
+    def _extract_metadata_from_test_results(self, task):
+        """
+        Extract metadata string from the source test results file.
+        
+        Args:
+            task: Task dictionary containing test information
+            
+        Returns:
+            str: Metadata string to include in restart test results
+        """
+        # Determine which test file to read from
+        test_type = task['source_test']  # 'iid' or 'non_iid'
+        source_results_file = (self.results_base / task['device_id'] / 
+                            task['process_name'] / test_type / 
+                            f"{task['file_hash']}.txt")
+        
+        if not source_results_file.exists():
+            self.logger.warning(f"Could not find source test file: {source_results_file}")
+            return "Metadata not available"
+        
+        try:
+            with open(source_results_file, 'r') as f:
+                content = f.read()
+            
+            # Extract the metadata section (between Return code and ===)
+            lines = content.split('\n')
+            metadata_lines = []
+            in_metadata = False
+            
+            for line in lines:
+                if line.startswith('Return code:'):
+                    in_metadata = True
+                    continue
+                # WARNING: This assumes the metadata section ends with a line of 80 equals signs.
+                elif line.startswith('=' * 80):
+                    break
+                elif in_metadata and line.strip():
+                    metadata_lines.append(line)
+            
+            return '\n'.join(metadata_lines)
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting metadata: {e}")
+            return "Error extracting metadata"    
+    
+    def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None,
+                                include_binary_stats=True, correlation_lags=None):
         """
         Collect entropy test results from all test files and compile into a CSV.
         
@@ -879,7 +938,9 @@ class EntropyEvaluationPipeline:
             device_id: Specific device to process (if None, all devices)
             process_names: Specific processes to include (if None, all processes)
             output_csv: Path to output CSV file (if None, returns DataFrame)
-            
+            include_binary_stats: Whether to include binary file statistics (default: True)
+            correlation_lags: List of correlation lags to compute (default: [1, 2, 4, ..., 1024])
+
         Returns:
             pd.DataFrame: DataFrame with entropy results
         """
@@ -931,6 +992,7 @@ class EntropyEvaluationPipeline:
                         'r_width': None,
                         'field': None,
                         'iid_pass': None,
+                        'restart_type':None,
                         'restart_pass': None,
                         'h_original_iid': None,
                         'h_original_non_iid': None,
@@ -973,71 +1035,13 @@ class EntropyEvaluationPipeline:
                                 result.update(parsed_result)
                                 self.logger.info(f"Restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                     
-                    #self.logger.debug(f"Parsed result for {test_file}: {result}")
+                    # Add binary statistics to the result
+                    if include_binary_stats:
+                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags)
+                        result.update(binary_stats)
+
                     # Add result to the list
                     results_list.append(result)
-
-                #Parse each test type
-                # TO DO: parse 'iid' and 'non_iid' in same loop so that results are all in same row
-                # for test_type in ['iid', 'non_iid', 'restart']:
-                #     test_dir = process_dir / test_type
-                #     if not test_dir.exists():
-                #         continue
-                    
-                #     if test_type == 'restart':
-                #         # Process restart tests differently - aggregate by hash
-                #         for hash_dir in test_dir.iterdir():
-                #             if hash_dir.is_dir():
-                #                 # Get all restart files for this hash
-                #                 restart_files = sorted(hash_dir.glob('*.txt'))
-                #                 if restart_files:
-                #                     # Process all restart files to find minimum entropy
-                #                     min_h = float('inf')
-                #                     all_passed = True
-                                    
-                #                     for restart_file in restart_files:
-                #                         try:
-                #                             with open(restart_file, 'r') as f:
-                #                                 content = f.read()
-                                            
-                #                             # Check pass/fail
-                #                             if 'Failed' in content:
-                #                                 all_passed = False
-                                            
-                #                             # Extract H_original
-                #                             if 'min(H_r, H_c, H_I): ' in content:
-                #                                 h_line = content.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
-                #                                 try:
-                #                                     h_value = float(h_line)
-                #                                     min_h = min(min_h, h_value)
-                #                                 except ValueError:
-                #                                     pass
-                #                         except Exception as e:
-                #                             self.logger.error(f"Error reading {restart_file}: {e}")
-                                    
-                #                     # Find corresponding base result to update
-                #                     file_hash = hash_dir.name
-                #                     # Look for existing result with this hash
-                #                     for i, res in enumerate(results):
-                #                         if (res.get('raw_hash') == file_hash and 
-                #                             res.get('device') == current_device and
-                #                             res.get('processing') == current_process):
-                #                             # Update with restart results
-                #                             results[i]['restart_pass'] = all_passed
-                #                             if min_h != float('inf'):
-                #                                 results[i]['h_final'] = min_h
-                #                             break
-                #                     else:
-                #                         # No existing result found, this shouldn't happen if tests run in order
-                #                         self.logger.warning(f"No base result found for restart test {file_hash}")
-                #     else:
-                #         # IID and non-IID tests
-                #         for result_file in test_dir.glob('*.txt'):
-
-                #             result = self._parse_iid_non_iid_result_file(result_file)
-                            
-                #             if result:
-                #                 results.append(result)
         
         # Create DataFrame
         df = pd.DataFrame(results_list).sort_values(by=['device', 'r_amplitude', 'r_width', 'processing', 'switching_probability'])
@@ -1046,9 +1050,13 @@ class EntropyEvaluationPipeline:
         column_order = [
             'device', 'processing', 'raw_hash',
             'switching_probability', 's_amplitude', 's_width', 
-            'r_amplitude', 'r_width', 'field', 'iid_pass', 'restart_pass',
+            'r_amplitude', 'r_width', 'field', 'iid_pass', 'restart_type', 'restart_pass', 
             'h_original_iid', 'h_original_non_iid', 'h_final'
         ]
+
+        # Add binary statistics columns if requested
+        if include_binary_stats:
+            column_order.extend(self._get_binary_statistics_columns(correlation_lags))
         
         # Add missing columns with NaN
         for col in column_order:
@@ -1166,10 +1174,16 @@ class EntropyEvaluationPipeline:
                     with open(restart_file, 'r') as f:
                         content = f.read()
                     
+                    # Extract restart test type
+                    if 'ea_restart -i' in content:
+                        restart_type = 'iid'
+                    else:
+                        restart_type = 'non_iid'
+
                     # Check pass/fail
-                    if 'Failed' in content:
+                    if '** Failed' in content:
                         all_passed = False #TO DO: IF THIS HAPPENS AND WE'RE DOING IID TESTS WE SHOULD SWITCH TO NON-IID
-                    
+
                     # Extract min entropy
                     if 'min(H_r, H_c, H_I): ' in content:
                         h_line = content.split('min(H_r, H_c, H_I): ')[1].split('\n')[0].strip()
@@ -1188,6 +1202,7 @@ class EntropyEvaluationPipeline:
         if min_h != float('inf'):
             result['h_final'] = min_h
             result['restart_pass'] = all_passed
+            result['restart_type'] = restart_type
         else:
             self.logger.warning(f"No valid H values found in restart files for {restart_result_dir}")
             return None
@@ -1222,69 +1237,171 @@ class EntropyEvaluationPipeline:
         else:
             return None
 
-    # def _parse_entropy_result_file(self, result_file, device_id, process_name, 
-    #                             test_type, file_hash):
-    #     """
-    #     Parse a single entropy test result file.
+    def _compute_binary_statistics(self, bin_file_path, correlation_lags=None):
+        """
+        Compute statistics for a binary file.
         
-    #     Returns:
-    #         dict: Parsed results or None if parsing fails
-    #     """
-    #     try:
-    #         with open(result_file, 'r') as f:
-    #             content = f.read()
+        Args:
+            bin_file_path: Path to the .bin file
             
-    #         result = {
-    #             'device': device_id,
-    #             'processing': process_name,
-    #             'raw_hash': file_hash
-    #         }
+        Returns:
+            dict: Dictionary containing:
+                - mean: Mean value (probability of 1 bits)
+                - variance: Variance of the binary data
+                - correlations: Dict of {lag: correlation_coefficient}
+        """
+        try:
+            # Read binary file
+            with open(bin_file_path, 'rb') as f:
+                data = np.frombuffer(f.read(), dtype=np.uint8)
             
-    #         # Extract metadata (switching probability and parameters)
-    #         metadata_match = False
-    #         for line in content.split('\n'):
-    #             if "('s_amplitude'," in line and 'switching_probability' in line:
-    #                 metadata_match = True
-    #                 continue
-    #             if metadata_match and line.startswith('(') and line.endswith(')'):
-    #                 # Parse the tuple
-    #                 try:
-    #                     values = eval(line)  # Safe here as we control the format
-    #                     result['s_amplitude'] = values[0]
-    #                     result['s_width'] = values[1]
-    #                     result['r_amplitude'] = values[2]
-    #                     result['r_width'] = values[3]
-    #                     result['field'] = values[4]
-    #                     result['switching_probability'] = values[5]
-    #                 except:
-    #                     self.logger.warning(f"Could not parse metadata from {result_file}")
-    #                 break
+            if len(data) == 0:
+                self.logger.warning(f"Empty binary file: {bin_file_path}")
+                return None
             
-    #         # Extract H_original
-    #         h_original = None
-    #         if 'H_original:' in content:
-    #             h_line = content.split('H_original:')[1].split('\n')[0].strip()
-    #             try:
-    #                 h_original = float(h_line)
-    #             except ValueError:
-    #                 pass
+            # Compute mean and variance
+            mean = np.mean(data)
+            variance = np.var(data)
             
-    #         # Extract pass/fail status
-    #         passed = 'Failed' not in content and 'Passed' in content
+            # Define lags to compute (following the paper's example)
+            # You can adjust these based on your needs
+            if not correlation_lags:
+                correlation_lags = np.power(2, np.arange(0,21))
             
-    #         # Populate test-specific fields
-    #         if test_type == 'iid':
-    #             result['iid_pass'] = passed
-    #             result['h_original_iid'] = h_original
-    #         elif test_type == 'non_iid':
-    #             result['h_original_non_iid'] = h_original
-    #         elif test_type == 'restart':
-    #             # For restart tests, we only return if this is a summary (restart_id is None)
-    #             # Individual restart files will be processed separately
-    #             return None
+            # Compute correlations
+            correlations = self._compute_correlation_coefficients(data, correlation_lags)
             
-    #         return result
+            result = {
+                'mean': float(mean),
+                'variance': float(variance),
+                'correlations': correlations
+            }
             
-    #     except Exception as e:
-    #         self.logger.error(f"Error parsing {result_file}: {e}")
-    #         return None
+            self.logger.info(f"Binary statistics for {bin_file_path.name}:")
+            self.logger.info(f"  Samples: {len(data):,}")
+            self.logger.info(f"  Mean: {mean:.6f}")
+            self.logger.info(f"  Variance: {variance:.6f}")
+            self.logger.info(f"  Correlation (lag=1): {correlations.get(1, 'N/A'):.6f}")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error computing binary statistics for {bin_file_path}: {e}")
+            return None
+
+    def _compute_correlation_coefficients(self, data, correlation_lags):
+        """
+        Compute correlation coefficients for multiple lags.
+        
+        Using the formula:
+        correlation(lag) = sum((r_i - r̄)(r_{i+lag} - r̄)) / sqrt(sum((r_i - r̄)²) * sum((r_{i+lag} - r̄)²))
+        
+        Args:
+            data: Binary data array (0s and 1s)
+            lags: List of lag values to compute
+            
+        Returns:
+            dict: {lag: correlation_coefficient}
+        """
+        correlations = {}
+        
+        # Convert to float for calculations
+        data = data.astype(np.float64)
+        #mean = np.mean(data)
+        
+        for lag in correlation_lags:
+            if lag >= len(data):
+                self.logger.warning(f"Lag {lag} exceeds data length {len(data)}, skipping")
+                continue
+            
+            # Get the two sequences
+            x = data[:-lag]  # r_i
+            y = data[lag:]   # r_{i+lag}
+
+            xmean = np.mean(x)
+            ymean = np.mean(y)
+            
+            # Center the sequences
+            x_centered = x - xmean
+            y_centered = y - ymean
+            
+            # Compute correlation using the formula from the paper
+            numerator = np.sum(x_centered * y_centered)
+            denominator = np.sqrt(np.sum(x_centered**2) * np.sum(y_centered**2))
+            
+            if denominator > 0:
+                correlation = numerator / denominator
+                correlations[lag] = float(correlation)
+            else:
+                correlations[lag] = 0.0
+        
+        return correlations
+    
+    def _get_binary_statistics(self, device_id, process_name, file_hash, correlation_lags=None):
+        """
+        Get binary statistics for a specific file.
+        
+        Args:
+            device_id: Device ID
+            process_name: Process name (e.g., 'raw', 'xor2')
+            file_hash: File hash
+            correlation_lags: List of correlation lags to compute (default: [1, 2, 4, ..., 1024])
+            
+        Returns:
+            dict: Dictionary containing binary statistics with keys:
+                - mean: Mean value (probability of 1 bits)
+                - variance: Variance of the binary data
+                - corr_lag_N: Correlation coefficient for lag N
+        """
+        # Default correlation lags if not specified
+        if correlation_lags is None:
+            correlation_lags = np.power(2, np.arange(0, 21))
+        
+        # Initialize result with None values
+        stats_result = {
+            'mean': None,
+            'variance': None
+        }
+        for lag in correlation_lags:
+            stats_result[f'corr_lag_{lag}'] = None
+        
+        # Construct path to binary file
+        bin_file = self.output_base / device_id / process_name / f"{file_hash}.bin"
+        
+        if not bin_file.exists():
+            self.logger.debug(f"Binary file not found: {bin_file}")
+            return stats_result
+        
+        # Compute statistics
+        stats = self._compute_binary_statistics(bin_file)
+        
+        if stats:
+            # Update result with computed statistics
+            stats_result['mean'] = stats['mean']
+            stats_result['variance'] = stats['variance']
+            
+            # Add correlation values
+            for lag in correlation_lags:
+                if lag in stats['correlations']:
+                    stats_result[f'corr_lag_{lag}'] = stats['correlations'][lag]
+        
+        return stats_result
+
+    def _get_binary_statistics_columns(self, correlation_lags=None):
+        """
+        Get list of column names for binary statistics.
+        
+        Args:
+            correlation_lags: List of correlation lags 
+            
+        Returns:
+            list: Column names for binary statistics
+        """
+        if correlation_lags is None:
+            correlation_lags = np.power(2, np.arange(0, 21)) # Powers of 2 from 0 to 1 MiB
+        
+        columns = ['mean', 'variance']
+        for lag in correlation_lags:
+            columns.append(f'corr_lag_{lag}')
+        
+        return columns

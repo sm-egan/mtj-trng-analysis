@@ -32,9 +32,10 @@ sample_data/
 database/
 temp_downloads/
 bin/
+plots_data/
 
 # Plots
-misc_plots/
+sample_plots/
 
 # Log files
 *.log
@@ -47,4 +48,3 @@ notebooks/prng.ipynb
 
 # Entropy source validation results
 esv/
-plots_data/
