@@ -1289,7 +1289,7 @@ class EntropyEvaluationPipeline:
             self.logger.error(f"Error computing binary statistics for {bin_file_path}: {e}")
             return None
 
-    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=1_000_000):
+    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=None):
         """
         Compute correlation coefficients for multiple lags.
         
@@ -1299,6 +1299,7 @@ class EntropyEvaluationPipeline:
         Args:
             data: Binary data array (0s and 1s)
             lags: List of lag values to compute
+            max_len: Refers to N-k in definition of ACF (number of terms in auto-correlation sum)
             
         Returns:
             dict: {lag: correlation_coefficient}
