@@ -129,7 +129,7 @@ def calculate_switching_probability(measurements, threshold=None, group_by=None)
         
         return result
 
-def xorn_whitening(binary_data, n=2, method="nonoverlapping", verbose=False):
+def xorn_whitening(binary_data, n=2, method="nonoverlapping", rolling_lag=1, verbose=False):
     L = len(binary_data)
 
     if method == "nonoverlapping":
@@ -143,11 +143,22 @@ def xorn_whitening(binary_data, n=2, method="nonoverlapping", verbose=False):
 
     elif method == "rolling":
         nout = L - n + 1
-
+        
         rolling_data = binary_data.copy()
         for i in range(1, n):
             rolling_data += np.roll(binary_data, -i)
-        xorn = rolling_data[:nout] % 2
+        xorn = rolling_data[:nout] % 2 
+        if rolling_lag < n:
+            #To implement rolling lag, just take a subset of the bitstream computed with the simple roll
+            ## Why this works: We still want to use sequential bits as XOR inputs, and the loop from 1 to n with np.roll
+            ## is a nice simple way to implement this. Then we control how much the windows overlap with the lag parameter
+            ## if n = rolling_lag, this is equivalent to non-overlapping
+            if rolling_lag > 1:
+                xorn = xorn[::rolling_lag]
+        else:
+            print('WARNING: rolling_lag >= n, either use nonoverlapping method or decrease rolling_lag. Returning None')
+            return None
+
 
     if verbose:
         print(f'Performing XOR{n} whitening')

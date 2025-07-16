@@ -68,35 +68,35 @@ if __name__ == "__main__":
 
     ###################################################
     # Loop over perturb pulse widths for Device 011_08 with r_amplitude = -0.6, -0.7, -0.8
-    for r_amplitude_V in [-0.6, -0.7, -0.8]:
-        for s_width_ns in np.arange(2,7,1):
-            pipeline.evaluate_entropy(
-                device_id="011_08",
-                # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
-                ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
-                polars_expr=(pl.col("r_amplitude") == r_amplitude_V) 
-                        & (pl.col("s_amplitude") == 5.96) 
-                        & (pl.col("s_width") == float(f"{s_width_ns}e-9")) 
-                        & (pl.col("row_number") < 426)
-                        & (pl.col("repeats") == 1_000_000),
-                xor_method='rolling',
-                tests=['non_iid', 'iid', 'restart'],
-                skip_existing=True
-            )
+    # for r_amplitude_V in [-0.6, -0.7, -0.8]:
+    #     for s_width_ns in np.arange(2,7,1):
+    #         pipeline.evaluate_entropy(
+    #             device_id="011_08",
+    #             # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+    #             ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+    #             polars_expr=(pl.col("r_amplitude") == r_amplitude_V) 
+    #                     & (pl.col("s_amplitude") == 5.96) 
+    #                     & (pl.col("s_width") == float(f"{s_width_ns}e-9")) 
+    #                     & (pl.col("row_number") < 426)
+    #                     & (pl.col("repeats") == 1_000_000),
+    #             #xor_method='rolling',
+    #             tests=['non_iid', 'iid', 'restart'],
+    #             skip_existing=True
+    #         )
 
-            pipeline.evaluate_entropy(
-                device_id="011_08",
-                # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
-                ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
-                polars_expr=(
-                        pl.col("r_amplitude") == r_amplitude_V) 
-                        & (pl.col("s_amplitude") == 5.96) 
-                        & (pl.col("s_width") == 1e-8) 
-                        & (pl.col("row_number") < 426),
-                tests=['non_iid', 'iid', 'restart'],
-                xor_method='rolling',
-                skip_existing=True
-            )
+    #         pipeline.evaluate_entropy(
+    #             device_id="011_08",
+    #             # str -> float approach necessary to avoid least significant digits from being introduced which prevent the runs from being found.
+    #             ## I encountered this problem when using np.linspace(2e-9,8e-9,1e-9) or even multiplying s_width_ns*1e-9 to define the s_width condition
+    #             polars_expr=(
+    #                     pl.col("r_amplitude") == r_amplitude_V) 
+    #                     & (pl.col("s_amplitude") == 5.96) 
+    #                     & (pl.col("s_width") == 1e-8) 
+    #                     & (pl.col("row_number") < 426),
+    #             tests=['non_iid', 'iid', 'restart'],
+    #             #xor_method='rolling',
+    #             skip_existing=True
+    #         )
     
     ## Accidentally missed 7 ns data point here and had to add it
     # for r_amplitude_V in [-0.7]:
@@ -171,3 +171,24 @@ if __name__ == "__main__":
     #         print(f"  Process: {process}")
     #         for file_hash, num_created in files.items():
     #             print(f"    {file_hash[:12]}...: {num_created} restart files")
+
+    ###############################################################
+    ### Run entropy evaluation for D023_07
+
+    pipeline.evaluate_entropy(
+        device_id="023_07",
+        #First run of 10 million repeats only 
+        polars_expr=(pl.col("row_number") == 290),
+        tests=['non_iid', 'iid', 'restart'],
+        #xor_method='rolling',
+        skip_existing=True
+    )
+
+    pipeline.evaluate_entropy(
+        device_id="023_07",
+        #All 10 million repeats runs, with drift ~50% -> 30%
+        polars_expr=(pl.col("row_number") == 290),
+        tests=['non_iid', 'iid', 'restart'],
+        #xor_method='rolling',
+        skip_existing=True
+    )

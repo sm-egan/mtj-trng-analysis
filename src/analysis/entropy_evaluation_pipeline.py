@@ -1289,7 +1289,7 @@ class EntropyEvaluationPipeline:
             self.logger.error(f"Error computing binary statistics for {bin_file_path}: {e}")
             return None
 
-    def _compute_correlation_coefficients(self, data, correlation_lags):
+    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=1_000_000):
         """
         Compute correlation coefficients for multiple lags.
         
@@ -1314,9 +1314,18 @@ class EntropyEvaluationPipeline:
                 self.logger.warning(f"Lag {lag} exceeds data length {len(data)}, skipping")
                 continue
             
-            # Get the two sequences
-            x = data[:-lag]  # r_i
-            y = data[lag:]   # r_{i+lag}
+            if max_len:
+                if len(data) - lag < max_len:
+                # # Get the two sequences
+                    x = data[:-lag]  # r_i
+                    y = data[lag:]   # r_{i+lag}
+                else:
+                    x = data[:max_len] # r_i
+                    y = data[lag:max_len+lag] # r_{i+lag}
+            else:
+                # # Get the two sequences
+                x = data[:-lag]  # r_i
+                y = data[lag:]   # r_{i+lag}
 
             xmean = np.mean(x)
             ymean = np.mean(y)

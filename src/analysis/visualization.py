@@ -262,7 +262,49 @@ def plot_comparison_subplots(data1, data2, ntrials, plot_type='histogram',
 
 
 # Keep original function for backward compatibility
-def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, bins=100):
+# def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, bins=100):
+#     """
+#     Plot a histogram of data with threshold and peaks marked.
+    
+#     Args:
+#         df: Polars DataFrame with 'device_voltage' column
+#         threshold: Optional voltage threshold (will be calculated if None)
+#         peaks: Optional peaks array (will be calculated if None)
+#         sample_size: Number of samples to use if data is large
+#         bins: Number of histogram bins
+        
+#     Returns:
+#         matplotlib.figure.Figure: The created figure
+#     """
+#     import matplotlib.pyplot as plt
+#     from src.analysis.processing import find_p_ap_states
+    
+#     # Sample data if it's very large
+#     if len(df) > sample_size:
+#         sample_df = df.sample(sample_size)
+#     else:
+#         sample_df = df
+    
+#     # Get voltage data as numpy array for plotting
+#     voltage_data = sample_df["device_voltage"].to_numpy()
+    
+#     # Calculate threshold and peaks if not provided
+#     if threshold is None or peaks is None:
+#         threshold, peaks, _ = find_p_ap_states(df, sample_size)
+    
+#     # Create the plot
+#     fig = plt.figure(figsize=(10, 6))
+#     plt.hist(voltage_data, bins=bins, alpha=0.7, density=True)
+#     plt.axvline(threshold, color='r', linestyle='-', linewidth=3, label=f'Threshold: {threshold:.4f}V')
+#     plt.axvline(peaks[0], color='g', linestyle='--', linewidth=3, label=f'P: {peaks[0]:.4f}V')
+#     plt.axvline(peaks[1], color='g', linestyle='-.', linewidth=3, label=f'AP: {peaks[1]:.4f}V')
+#     plt.xlabel('Voltage')
+#     plt.ylabel('Frequency')
+#     plt.legend(bbox_to_anchor=(0.5, 1.12), loc='upper center', ncol=3)
+    
+#     return fig
+
+def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, bins=100, **kwargs):
     """
     Plot a histogram of data with threshold and peaks marked.
     
@@ -272,12 +314,27 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
         peaks: Optional peaks array (will be calculated if None)
         sample_size: Number of samples to use if data is large
         bins: Number of histogram bins
-        
+        **kwargs: Additional plotting parameters:
+            - figsize: Figure size (default: (10, 6))
+            - fontsize: Font size for labels (default: matplotlib default)
+            - linewidth: Line width for threshold/peak lines (default: 3)
+            - hist_alpha: Histogram transparency (default: 0.7)
+            - Other kwargs passed to plt.hist()
+    
     Returns:
         matplotlib.figure.Figure: The created figure
     """
     import matplotlib.pyplot as plt
     from src.analysis.processing import find_p_ap_states
+    
+    # Extract specific kwargs with defaults
+    figsize = kwargs.pop('figsize', (10, 6))
+    fontsize = kwargs.pop('fontsize', None)
+    linewidth = kwargs.pop('linewidth', 3)
+    hist_alpha = kwargs.pop('hist_alpha', 0.7)
+    density = kwargs.pop('density', True)
+    legend_ncol = kwargs.pop('legend_ncol', 2)
+    legendy = kwargs.pop('legendy', 1.3)
     
     # Sample data if it's very large
     if len(df) > sample_size:
@@ -293,13 +350,19 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
         threshold, peaks, _ = find_p_ap_states(df, sample_size)
     
     # Create the plot
-    fig = plt.figure(figsize=(10, 6))
-    plt.hist(voltage_data, bins=bins, alpha=0.7)
-    plt.axvline(threshold, color='r', linestyle='-', linewidth=3, label=f'Threshold: {threshold:.4f}V')
-    plt.axvline(peaks[0], color='g', linestyle='--', linewidth=3, label=f'P: {peaks[0]:.4f}V')
-    plt.axvline(peaks[1], color='g', linestyle='-.', linewidth=3, label=f'AP: {peaks[1]:.4f}V')
-    plt.xlabel('Voltage')
-    plt.ylabel('Frequency')
-    plt.legend(bbox_to_anchor=(0.5, 1.12), loc='upper center', ncol=3)
+    fig = plt.figure(figsize=figsize)
+    
+    # Pass remaining kwargs to histogram
+    plt.hist(voltage_data*1e3, bins=bins, alpha=hist_alpha, density=density, **kwargs)
+
+    plt.axvline(peaks[0]*1e3, color='k', linestyle='--', linewidth=linewidth, label=f'P: {peaks[0]*1e3:.1f} mV')
+    plt.axvline(peaks[1]*1e3, color='k', linestyle=':', linewidth=linewidth, label=f'AP: {peaks[1]*1e3:.1f} mV')  
+    plt.axvline(threshold*1e3, color='r', linestyle='-', linewidth=linewidth, label=f'Threshold: {threshold*1e3:.1f} mV')
+    
+    plt.xlabel('Voltage (mV)', fontsize=fontsize)
+    plt.ylabel('Frequency', fontsize=fontsize)
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.legend(bbox_to_anchor=(0.5, legendy), loc='upper center', ncol=legend_ncol, fontsize=fontsize)
     
     return fig
