@@ -7,8 +7,8 @@ __all__ = [
     'chisquare_binomial_sample_var'
 ]
 
-def get_bernoulli_trials_statistics(binary_data):
-    Ns = []
+def get_bernoulli_trials_statistics(binary_data, Ns=None):
+    #Ns = []
     means = []
     vars = []
     medians = []
@@ -17,17 +17,19 @@ def get_bernoulli_trials_statistics(binary_data):
 
     data = binary_data
 
-    order = np.floor(np.log10(len(data) / 100))
-    maxN = np.power(10, order).astype(int) #Set the max N to two orders of magnitude less than the length of the data
+    if Ns is None:
+        order = np.floor(np.log10(len(data) / 100))
+        maxN = np.power(10, order).astype(int) #Set the max N to two orders of magnitude less than the length of the data
 
-    if maxN < 100:
-        maxN = 100
+        if maxN < 100:
+            maxN = 100
 
-    # Generate Ns as powers of 10, up to the maximum N
-    # This will create Ns like 100, 200, ..., 900, 1000, 2000, ..., 9000, 10000, ..., maxN
-    Ns = np.transpose(np.arange(1,10).reshape((9,1))*np.power(10, np.arange(2, order + 1))).flatten().astype(int)
-    print(Ns)
-    Ns = Ns[Ns <= maxN]
+        # Generate Ns as powers of 10, up to the maximum N
+        # This will create Ns like 100, 200, ..., 900, 1000, 2000, ..., 9000, 10000, ..., maxN
+        Ns = np.transpose(np.arange(1,10).reshape((9,1))*np.power(10, np.arange(2, order + 1))).flatten().astype(int)
+        Ns = Ns[Ns <= maxN]
+
+    print(f'Ns array: {Ns}')
 
     for N in Ns:
         # Calculate number of nonoverlapping subsets of length N in 1 million bits

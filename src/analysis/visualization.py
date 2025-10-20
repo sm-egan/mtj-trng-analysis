@@ -13,7 +13,7 @@ __all__ = [
 def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, 
                           binomial_pdf=True, binomial_p=None, density=True, align='left', title=None, ax=None, 
                           fontsize=16, hide_ylabel=False, show_plot=True, show_std=True,
-                          color=None, alpha=0.8, label=None, linewidth=None):
+                          color=None, alpha=0.8, label=None, linewidth=None, legend_ncols=1):
     """
     Plot histogram of binomial data with optional binomial PDF overlay.
     
@@ -99,9 +99,9 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             p = mean / ntrials if not plot_probabilities else mean
 
         if p == 0.5:
-                binomial_label = binomial_label = f'B({ntrials}, {p:.1f})'
+                binomial_label = binomial_label = f'$B({ntrials}, {p:.1f})$'
         else:
-            binomial_label = f'B({ntrials}, {p:.4f})'
+            binomial_label = f'$B({ntrials}, {p:.4f})$'
         
         #Set bins for the binomial pdf to the same range as hist bins
         bins_for_pdf = bins if not plot_probabilities else (bins * ntrials).astype(int)
@@ -113,7 +113,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             ax.plot(bins, pdf, 'k-.', label=binomial_label, linewidth=linewidth*5 if linewidth else 5)
     
     # Legend on plot
-    ax.legend(fontsize=fontsize-2, loc='upper left')
+    ax.legend(fontsize=fontsize-2, loc='upper left', ncol=legend_ncols)
     # Legend above plot
     #ax.legend(fontsize=fontsize-4, bbox_to_anchor=(0.5, 1.02), loc='lower center', ncol=1)
     ax.tick_params(axis='both', which='major', labelsize=fontsize)
@@ -125,7 +125,8 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
 
 
 def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
-                         fontsize=14, hide_ylabel=False, verbose=True, linewidth=None):
+                         fontsize=14, hide_ylabel=False, verbose=True, linewidth=None, legend_loc='lower left',
+                         edgecolor=None):
     """
     Plot switching probability scatter plot over trials.
     
@@ -177,8 +178,7 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
         print(f"Expected standard deviation: {expected_std:.5f}")
         print(f"Markersize = {markersize}")
     
-    # Create plot
-    ax.plot(x, data, 'bo', markersize=markersize)
+    ax.scatter(x, data, s=markersize, color='b', marker='o', edgecolors=edgecolor, linewidth=0.5)
     ax.set_xlabel(r'Sample Number ($10^6$)', fontsize=fontsize, fontweight='bold')
     
     if np.all(data < 1):
@@ -206,7 +206,7 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     else:
         ax.set_title(title, fontsize=fontsize, fontweight='bold')
     
-    ax.legend(fontsize=fontsize-2, loc='upper left')
+    ax.legend(fontsize=fontsize-2, loc=legend_loc)
     ax.tick_params(axis='both', which='major', labelsize=fontsize)
     
     if show_plot:

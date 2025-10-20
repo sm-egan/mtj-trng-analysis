@@ -30,20 +30,21 @@ def load_config():
     with open(config_path) as f:
         return json.load(f)
 
-def import_drive_data(folder_id, 
+def import_drive_data(root_folder_id, 
                         file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", 
                         logging_level='INFO',
                         n_files=None,
                         shuffle_files=False,
-                        new_filenames_only=True):
+                        new_filenames_only=True,
+                        drive_path=None):
     """Import experimental data from Google Drive to local database"""
     # Load config
     config = load_config()
     
-    # Use provided folder_id or fall back to config, but don't allow None
-    folder_id = folder_id or config['drive'].get('default_folder_id')
-    if not folder_id:
-        raise ValueError("No folder_id provided and no default set in config")
+    # Use provided root_folder_id or fall back to config, but don't allow None
+    root_folder_id = root_folder_id or config['drive'].get('default_folder_id')
+    if not root_folder_id:
+        raise ValueError("No root_folder_id provided and no default set in config")
     
     # Use paths from config
     credentials_path = project_root / config['drive']['credentials_path']
@@ -75,9 +76,38 @@ def import_drive_data(folder_id,
     )
     
     try:
+        # # Recursively list all matching files
+        # logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
+        # files = drive_manager.list_files_recursively(root_folder_id, file_pattern, include_do_not_import=False)
+        # logger.info(f"Found {len(files)} matching files")
+
+        # # Filter by path if specified
+        # if drive_path:
+        #     files = [f for f in files if f['folder_path'].startswith(drive_path)]
+        #     logger.info(f"Filtered to {len(files)} files under path '{drive_path}'")
+        # If path is specified, find that folder first
+
+        scan_folder_id = root_folder_id
+        scan_path = ''
+
+        if drive_path:
+            logger.info(f"Looking for folder at path: {drive_path}")
+            scan_folder_id = drive_manager.find_folder_by_path(root_folder_id, drive_path)
+            if not scan_folder_id:
+                logger.error(f"Could not find folder at path: {drive_path}")
+                return
+            scan_path = drive_path
+            logger.info(f"Found folder, will scan from: {drive_path}")
+
         # Recursively list all matching files
         logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
-        files = drive_manager.list_files_recursively(folder_id, file_pattern, include_do_not_import=False)
+        files = drive_manager.list_files_recursively(scan_folder_id, file_pattern, include_do_not_import=False)
+
+        # Update folder paths to include the starting path
+        for file in files:
+            # Add the folder prefix specific on command line argument if it was use, so that we can still extract the Device ID
+            if scan_path:
+                file['folder_path'] = f"{scan_path}/{file['folder_path']}" if file['folder_path'] else scan_path
         logger.info(f"Found {len(files)} matching files")
 
         if n_files:
@@ -148,21 +178,23 @@ def import_drive_data(folder_id,
 if __name__ == "__main__":
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Import experimental data from Google Drive')
-    parser.add_argument('--folder_id', help='Google Drive folder ID to import from (overrides config default)')
-    #parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", help='Regex pattern to match filenames')
+    parser.add_argument('--root_folder_id', help='Google Drive folder ID to import from (overrides config default)')
     parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?[\d.]+[eE][+-]?\d+_RWid[\d.]+[eE][+-]?\d+_SAmp[+-]?[\d.]+[eE][+-]?\d+_SWid[\d.]+[eE][+-]?\d+_Field[+-]?[\d.]+[eE][+-]?\d+_Source[\d.]+[eE][+-]?\d+_Repeats[\d.]+[eE][+-]?\d+\.txt$", help='Regex pattern to match filenames')
     parser.add_argument('--logging_level', default="INFO", help='Logging level (INFO, DEBUG)')
     parser.add_argument('--n_files', default=None, help='Number of files to import, if less that full list')
     parser.add_argument('--shuffle_files', default=False, help='Option to shuffle files in list before download. Only used when n_files is also specified.')
     parser.add_argument('--import_all_files', dest='new_filenames_only', action='store_false', help='Try to import all files, even those that might be duplicates (default: False)')
+    parser.add_argument('--path', default=None, help='Path within Drive to import from (e.g., Device_023_07 or Device_023_07/Data/Experiment_A)')
+
 
     args = parser.parse_args()
     
     import_drive_data(
-        args.folder_id, 
+        args.root_folder_id, 
         args.pattern, 
         args.logging_level, 
         int(args.n_files) if args.n_files is not None else args.n_files, 
         bool(args.shuffle_files),
-        args.new_filenames_only
+        args.new_filenames_only,
+        args.path
     )

@@ -175,20 +175,48 @@ if __name__ == "__main__":
     ###############################################################
     ### Run entropy evaluation for D023_07
 
-    pipeline.evaluate_entropy(
-        device_id="023_07",
-        #First run of 10 million repeats only 
-        polars_expr=(pl.col("row_number") == 290),
-        tests=['non_iid', 'iid', 'restart'],
-        #xor_method='rolling',
-        skip_existing=True
-    )
+    # pipeline.evaluate_entropy(
+    #     device_id="023_07",
+    #     #First run of 10 million repeats only 
+    #     polars_expr=(pl.col("row_number") == 290),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     #xor_method='rolling',
+    #     skip_existing=True
+    # )
+
+    # pipeline.evaluate_entropy(
+    #     device_id="023_07",
+    #     #All 10 million repeats runs, with drift ~50% -> 30%
+    #     polars_expr=(pl.col("row_number").is_between(290,305)),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     #xor_method='rolling',
+    #     skip_existing=True
+    # )
+
+
+    ###############################################################
+    ### Run entropy evaluation for D027_12
+
+    # pipeline.evaluate_entropy(
+    #     device_id="027_12",
+    #     #First run of 10 million repeats only 
+    #     polars_expr=(pl.col("row_number").is_between(2226, 2245)),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
+
+    # pipeline.evaluate_entropy(
+    #     device_id="027_12",
+    #     #First run of 10 million repeats only 
+    #     polars_expr=(pl.col("row_number").is_between(1992, 2011)),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
 
     pipeline.evaluate_entropy(
-        device_id="023_07",
-        #All 10 million repeats runs, with drift ~50% -> 30%
-        polars_expr=(pl.col("row_number") == 290),
+        device_id="027_12",
+        #First run of 10 million repeats only 
+        polars_expr=(pl.col("row_number").is_between(1932, 1951)),
         tests=['non_iid', 'iid', 'restart'],
-        #xor_method='rolling',
         skip_existing=True
     )

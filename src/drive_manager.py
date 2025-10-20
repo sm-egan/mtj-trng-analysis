@@ -46,6 +46,48 @@ class GoogleDriveManager:
             self.logger.error(f"Error listing folder contents: {str(e)}")
             raise
 
+    def find_folder_by_path(self, root_folder_id, path):
+        """
+        Navigate through folder path to find the target folder ID
+        
+        Args:
+            root_folder_id: Starting folder ID
+            path: Path string like 'Device_023_07' or 'Device_023_07/Data/Experiment_A'
+        
+        Returns:
+            Folder ID if found, None otherwise
+        """
+        if not path:
+            return root_folder_id
+        
+        # Split path into components
+        folders = path.split('/')
+        current_folder_id = root_folder_id
+        
+        for folder_name in folders:
+            # Search for this folder name in current location
+            try:
+                results = self.service.files().list(
+                    q=f"'{current_folder_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder'",
+                    fields="files(id, name)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
+                ).execute()
+                
+                files = results.get('files', [])
+                if not files:
+                    self.logger.error(f"Folder not found: {folder_name} in path {path}")
+                    return None
+                
+                # Move to this folder
+                current_folder_id = files[0]['id']
+                
+            except Exception as e:
+                self.logger.error(f"Error finding folder {folder_name}: {str(e)}")
+                return None
+        
+        return current_folder_id
+
     def list_files_recursively(self, folder_id, file_pattern=r"Hz_.*\.txt$", include_do_not_import=True) -> list:
         """
         Recursively list all matching files in a folder and its subfolders

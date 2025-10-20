@@ -159,7 +159,6 @@ def xorn_whitening(binary_data, n=2, method="nonoverlapping", rolling_lag=1, ver
             print('WARNING: rolling_lag >= n, either use nonoverlapping method or decrease rolling_lag. Returning None')
             return None
 
-
     if verbose:
         print(f'Performing XOR{n} whitening')
         print('Input:')
