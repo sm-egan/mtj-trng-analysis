@@ -14,6 +14,8 @@ from datetime import datetime
 project_root = Path(__file__).parents[1]
 sys.path.insert(0, str(project_root))
 
+DEFAULT_FILE_PATTERN = r"Hz_\d+.*Row\s*\d+_RAmp[+-]?[\d.]+[eE][+-]?\d+_RWid[\d.]+[eE][+-]?\d+_SAmp[+-]?[\d.]+[eE][+-]?\d+_SWid[\d.]+[eE][+-]?\d+_Field[+-]?[\d.]+[eE][+-]?\d+_Source[\d.]+[eE][+-]?\d+_Repeats[\d.]+[eE][+-]?\d+(?:__perturb_only)?\.txt$"
+
 from src.drive_manager import GoogleDriveManager
 # Import the new ParquetExperimentalDataManager instead of the original one
 from src.parquet_data_manager import ParquetExperimentalDataManager
@@ -31,7 +33,7 @@ def load_config():
         return json.load(f)
 
 def import_drive_data(root_folder_id, 
-                        file_pattern=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?\d+\.\d+E[+-]\d+_RWid\d+\.\d+E[+-]\d+_SAmp[+-]?\d+\.\d+E[+-]\d+_SWid\d+\.\d+E[+-]\d+_Field[+-]?\d+\.\d+E[+-]\d+_Source\d+\.\d+E[+-]\d+_Repeats\d+\.\d+E[+-]\d+\.txt$", 
+                        file_pattern=DEFAULT_FILE_PATTERN, 
                         logging_level='INFO',
                         n_files=None,
                         shuffle_files=False,
@@ -87,28 +89,36 @@ def import_drive_data(root_folder_id,
         #     logger.info(f"Filtered to {len(files)} files under path '{drive_path}'")
         # If path is specified, find that folder first
 
-        scan_folder_id = root_folder_id
-        scan_path = ''
-
+        # Handle multiple paths if specified
+        all_files = []
         if drive_path:
-            logger.info(f"Looking for folder at path: {drive_path}")
-            scan_folder_id = drive_manager.find_folder_by_path(root_folder_id, drive_path)
-            if not scan_folder_id:
-                logger.error(f"Could not find folder at path: {drive_path}")
-                return
-            scan_path = drive_path
-            logger.info(f"Found folder, will scan from: {drive_path}")
+            paths = [p.strip() for p in drive_path.split(',')]
+            logger.info(f"Scanning {len(paths)} specified path(s) for files: {paths}")
+            
+            for path in paths:
+                logger.info(f"Looking for folder at path: {path}")
+                scan_folder_id = drive_manager.find_folder_by_path(root_folder_id, path)
+                if not scan_folder_id:
+                    logger.error(f"Could not find folder at path: {path}, skipping")
+                    continue
+                
+                logger.info(f"Found folder, scanning: {path}")
+                files = drive_manager.list_files_recursively(scan_folder_id, file_pattern, include_do_not_import=False)
+                
+                # Update folder paths to include the starting path
+                # Add the folder prefix specific on command line argument if it was used, so that we can still extract the Device ID
+                for file in files:
+                    file['folder_path'] = f"{path}/{file['folder_path']}" if file['folder_path'] else path
+                
+                all_files.extend(files)
+                logger.info(f"Found {len(files)} files in {path}")
+        else:
+            # No path specified, scan from root
+            logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
+            all_files = drive_manager.list_files_recursively(folder_id, file_pattern, include_do_not_import=False)
 
-        # Recursively list all matching files
-        logger.info(f"Recursively searching for files matching pattern: {file_pattern}")
-        files = drive_manager.list_files_recursively(scan_folder_id, file_pattern, include_do_not_import=False)
-
-        # Update folder paths to include the starting path
-        for file in files:
-            # Add the folder prefix specific on command line argument if it was use, so that we can still extract the Device ID
-            if scan_path:
-                file['folder_path'] = f"{scan_path}/{file['folder_path']}" if file['folder_path'] else scan_path
-        logger.info(f"Found {len(files)} matching files")
+        files = all_files
+        logger.info(f"Total: {len(files)} matching files")
 
         if n_files:
             if shuffle_files:
@@ -179,7 +189,7 @@ if __name__ == "__main__":
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Import experimental data from Google Drive')
     parser.add_argument('--root_folder_id', help='Google Drive folder ID to import from (overrides config default)')
-    parser.add_argument('--pattern', default=r"Hz_\d+.*Row\s*\d+_RAmp[+-]?[\d.]+[eE][+-]?\d+_RWid[\d.]+[eE][+-]?\d+_SAmp[+-]?[\d.]+[eE][+-]?\d+_SWid[\d.]+[eE][+-]?\d+_Field[+-]?[\d.]+[eE][+-]?\d+_Source[\d.]+[eE][+-]?\d+_Repeats[\d.]+[eE][+-]?\d+\.txt$", help='Regex pattern to match filenames')
+    parser.add_argument('--pattern', default=DEFAULT_FILE_PATTERN, help='Regex pattern to match filenames')
     parser.add_argument('--logging_level', default="INFO", help='Logging level (INFO, DEBUG)')
     parser.add_argument('--n_files', default=None, help='Number of files to import, if less that full list')
     parser.add_argument('--shuffle_files', default=False, help='Option to shuffle files in list before download. Only used when n_files is also specified.')
