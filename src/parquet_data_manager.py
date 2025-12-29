@@ -108,23 +108,35 @@ class ParquetExperimentalDataManager(ExperimentalDataManager):
         if device_id:
             params['device_id'] = device_id
         
-        # Load the data file
+        # Try to load with numpy loadtxt.
         try:
+            # Fast path for well-formed files (single row)
             self.logger.debug(f"Loading data from {filepath.name}")
             data = np.loadtxt(filepath, delimiter='\t')
         except ValueError as e:
             self.logger.debug(f"numpy.loadtxt failed with error: {str(e)}")
             try:
-                self.logger.debug(f"Attempting pandas read for {filepath.name}")
-                df = pd.read_csv(filepath, delimiter='\t', header=None)
-                max_cols = df.shape[1]
-                valid_data = df[df.notna().sum(axis=1) == max_cols]
-                if len(valid_data) > 0:
-                    data = valid_data.iloc[0].values
-                else:
-                    raise ValueError("No valid data rows found")
+                # Flexible path for files with issues
+                self.logger.debug(f"Attempting genfromtxt for {filepath.name}")
+                data = np.genfromtxt(filepath, delimiter='\t', missing_values='', filling_values=np.nan)
+                
+                # Handle multi-row files (accidental format)
+                if data.ndim > 1:
+                    self.logger.warning(f"File has {data.shape[0]} rows - expected single row format")
+                    # Flatten to combine all rows
+                    data = data.flatten()
+                    self.logger.info(f"Flattened multi-row data into single array")
+                
+                # Remove NaNs from trailing empty columns or from flattening
+                nan_count = np.isnan(data).sum()
+                if nan_count > 0:
+                    data = data[~np.isnan(data)]
+                    self.logger.debug(f"Removed {nan_count} NaN values")
+                
             except Exception as e2:
-                self.logger.error(f"Both reading methods failed for {filepath.name}")
+                self.logger.error(f"Both loading methods failed for {filepath.name}")
+                self.logger.error(f"loadtxt error: {str(e)}")
+                self.logger.error(f"genfromtxt error: {str(e2)}")
                 raise
 
         # Generate run ID and hash

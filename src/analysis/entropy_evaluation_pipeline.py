@@ -206,6 +206,8 @@ class EntropyEvaluationPipeline:
                         group_by: Optional[list] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]) -> Tuple[Optional[np.ndarray], str, float, str]:
         """
         Get binary data from runs for a specific device
+        TO DO: ADD FUNCTIONALITY TO THIS METHOD TO CHECK IF # MEASUREMENTS IS DOUBLE THE # OF REPEATS.
+        IF SO, USE SLICING METHOD FROM DEVICE 027_12 NOTEBOOK TO SEPARATE RESET AND PERTURB MEASUREMENTS
         
         Returns:
             Tuple of (binary_array, hash, switching_probability) or (None, "", 0.0) if no data
@@ -1263,12 +1265,12 @@ class EntropyEvaluationPipeline:
             mean = np.mean(data)
             variance = np.var(data)
             
-            # Define lags to compute (following the paper's example)
-            # You can adjust these based on your needs
+            # Define lags to compute
             if not correlation_lags:
-                correlation_lags = np.power(2, np.arange(0,21))
+                correlation_lags = np.power(2, np.arange(0,21)) # lag = 1 to 2^20 = 1,048,576
             
             # Compute correlations
+            ## TO DO: DOUBLE CHECK HOW YOU SET N-k FOR THE IEDM PAPER RESULTS
             correlations = self._compute_correlation_coefficients(data, correlation_lags)
             
             result = {
@@ -1289,7 +1291,7 @@ class EntropyEvaluationPipeline:
             self.logger.error(f"Error computing binary statistics for {bin_file_path}: {e}")
             return None
 
-    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=None):
+    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=int(2**20)):
         """
         Compute correlation coefficients for multiple lags.
         
@@ -1361,7 +1363,7 @@ class EntropyEvaluationPipeline:
             dict: Dictionary containing binary statistics with keys:
                 - mean: Mean value (probability of 1 bits)
                 - variance: Variance of the binary data
-                - corr_lag_N: Correlation coefficient for lag N
+                - corr_lag_N: Correlation coefficient for lag N. Default: Powers of 2 from 0 to 1 MiB
         """
         # Default correlation lags if not specified
         if correlation_lags is None:

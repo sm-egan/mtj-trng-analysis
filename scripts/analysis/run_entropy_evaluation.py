@@ -175,14 +175,14 @@ if __name__ == "__main__":
     ###############################################################
     ### Run entropy evaluation for D023_07
 
-    # pipeline.evaluate_entropy(
-    #     device_id="023_07",
-    #     #First run of 10 million repeats only 
-    #     polars_expr=(pl.col("row_number") == 290),
-    #     tests=['non_iid', 'iid', 'restart'],
-    #     #xor_method='rolling',
-    #     skip_existing=True
-    # )
+    pipeline.evaluate_entropy(
+        device_id="023_07",
+        #First run of 10 million repeats only 
+        polars_expr=(pl.col("row_number") == 290),
+        tests=['non_iid', 'iid', 'restart'],
+        #xor_method='rolling',
+        skip_existing=False
+    )
 
     # pipeline.evaluate_entropy(
     #     device_id="023_07",
@@ -192,7 +192,13 @@ if __name__ == "__main__":
     #     #xor_method='rolling',
     #     skip_existing=True
     # )
-
+    # pipeline.evaluate_entropy(
+    #     device_id="023_07",
+    #     #Late September data 
+    #     polars_expr=(pl.col("row_number").is_between(6690, 6709)),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
 
     ###############################################################
     ### Run entropy evaluation for D027_12
@@ -213,10 +219,11 @@ if __name__ == "__main__":
     #     skip_existing=True
     # )
 
-    pipeline.evaluate_entropy(
-        device_id="027_12",
-        #First run of 10 million repeats only 
-        polars_expr=(pl.col("row_number").is_between(1932, 1951)),
-        tests=['non_iid', 'iid', 'restart'],
-        skip_existing=True
-    )
+    # pipeline.evaluate_entropy(
+    #     device_id="027_12",
+    #     #First run of 10 million repeats only 
+    #     polars_expr=(pl.col("row_number").is_between(1932, 1951)),
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
+
