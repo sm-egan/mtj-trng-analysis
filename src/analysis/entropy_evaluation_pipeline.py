@@ -8,6 +8,7 @@ from datetime import datetime
 import logging
 from typing import List, Optional, Tuple
 from src.analysis.processing import xorn_whitening
+from src.analysis.stats import compute_binary_statistics, compute_correlation_coefficients
 import sqlite3
 
 
@@ -1058,7 +1059,7 @@ class EntropyEvaluationPipeline:
 
         # Add binary statistics columns if requested
         if include_binary_stats:
-            column_order.extend(self._get_binary_statistics_columns(correlation_lags))
+            column_order.extend(self._get_binary_statistics_column_names(correlation_lags))
         
         # Add missing columns with NaN
         for col in column_order:
@@ -1239,141 +1240,26 @@ class EntropyEvaluationPipeline:
         else:
             return None
 
-    def _compute_binary_statistics(self, bin_file_path, correlation_lags=None):
+    def _get_binary_statistics(self, device_id, process_name, file_hash, 
+                            correlation_lags=None):
         """
         Compute statistics for a binary file.
-        
-        Args:
-            bin_file_path: Path to the .bin file
-            
-        Returns:
-            dict: Dictionary containing:
-                - mean: Mean value (probability of 1 bits)
-                - variance: Variance of the binary data
-                - correlations: Dict of {lag: correlation_coefficient}
-        """
-        try:
-            # Read binary file
-            with open(bin_file_path, 'rb') as f:
-                data = np.frombuffer(f.read(), dtype=np.uint8)
-            
-            if len(data) == 0:
-                self.logger.warning(f"Empty binary file: {bin_file_path}")
-                return None
-            
-            # Compute mean and variance
-            mean = np.mean(data)
-            variance = np.var(data)
-            
-            # Define lags to compute
-            if not correlation_lags:
-                correlation_lags = np.power(2, np.arange(0,21)) # lag = 1 to 2^20 = 1,048,576
-            
-            # Compute correlations
-            ## TO DO: DOUBLE CHECK HOW YOU SET N-k FOR THE IEDM PAPER RESULTS
-            correlations = self._compute_correlation_coefficients(data, correlation_lags)
-            
-            result = {
-                'mean': float(mean),
-                'variance': float(variance),
-                'correlations': correlations
-            }
-            
-            self.logger.info(f"Binary statistics for {bin_file_path.name}:")
-            self.logger.info(f"  Samples: {len(data):,}")
-            self.logger.info(f"  Mean: {mean:.6f}")
-            self.logger.info(f"  Variance: {variance:.6f}")
-            self.logger.info(f"  Correlation (lag=1): {correlations.get(1, 'N/A'):.6f}")
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Error computing binary statistics for {bin_file_path}: {e}")
-            return None
-
-    def _compute_correlation_coefficients(self, data, correlation_lags, max_len=int(2**20)):
-        """
-        Compute correlation coefficients for multiple lags.
-        
-        Using the formula:
-        correlation(lag) = sum((r_i - r̄)(r_{i+lag} - r̄)) / sqrt(sum((r_i - r̄)²) * sum((r_{i+lag} - r̄)²))
-        
-        Args:
-            data: Binary data array (0s and 1s)
-            lags: List of lag values to compute
-            max_len: Refers to N-k in definition of ACF (number of terms in auto-correlation sum)
-            
-        Returns:
-            dict: {lag: correlation_coefficient}
-        """
-        correlations = {}
-        
-        # Convert to float for calculations
-        data = data.astype(np.float64)
-        #mean = np.mean(data)
-        
-        for lag in correlation_lags:
-            if lag >= len(data):
-                self.logger.warning(f"Lag {lag} exceeds data length {len(data)}, skipping")
-                continue
-            
-            if max_len:
-                if len(data) - lag < max_len:
-                # # Get the two sequences
-                    x = data[:-lag]  # r_i
-                    y = data[lag:]   # r_{i+lag}
-                else:
-                    x = data[:max_len] # r_i
-                    y = data[lag:max_len+lag] # r_{i+lag}
-            else:
-                # # Get the two sequences
-                x = data[:-lag]  # r_i
-                y = data[lag:]   # r_{i+lag}
-
-            xmean = np.mean(x)
-            ymean = np.mean(y)
-            
-            # Center the sequences
-            x_centered = x - xmean
-            y_centered = y - ymean
-            
-            # Compute correlation using the formula from the paper
-            numerator = np.sum(x_centered * y_centered)
-            denominator = np.sqrt(np.sum(x_centered**2) * np.sum(y_centered**2))
-            
-            if denominator > 0:
-                correlation = numerator / denominator
-                correlations[lag] = float(correlation)
-            else:
-                correlations[lag] = 0.0
-        
-        return correlations
-    
-    def _get_binary_statistics(self, device_id, process_name, file_hash, correlation_lags=None):
-        """
-        Get binary statistics for a specific file.
         
         Args:
             device_id: Device ID
             process_name: Process name (e.g., 'raw', 'xor2')
             file_hash: File hash
-            correlation_lags: List of correlation lags to compute (default: [1, 2, 4, ..., 1024])
+            correlation_lags: List of lags for autocorrelation (default: powers of 2 up to 2^20)
             
         Returns:
-            dict: Dictionary containing binary statistics with keys:
-                - mean: Mean value (probability of 1 bits)
-                - variance: Variance of the binary data
-                - corr_lag_N: Correlation coefficient for lag N. Default: Powers of 2 from 0 to 1 MiB
+            dict: Flat statistics dictionary with keys: mean, variance, corr_lag_1, corr_lag_2, etc.
+                Returns dict with None values if file is missing or empty.
         """
-        # Default correlation lags if not specified
         if correlation_lags is None:
-            correlation_lags = np.power(2, np.arange(0, 21))
+            correlation_lags = (2 ** np.arange(0, 21)).tolist()
         
         # Initialize result with None values
-        stats_result = {
-            'mean': None,
-            'variance': None
-        }
+        stats_result = {'mean': None, 'variance': None}
         for lag in correlation_lags:
             stats_result[f'corr_lag_{lag}'] = None
         
@@ -1384,22 +1270,40 @@ class EntropyEvaluationPipeline:
             self.logger.debug(f"Binary file not found: {bin_file}")
             return stats_result
         
-        # Compute statistics
-        stats = self._compute_binary_statistics(bin_file)
-        
-        if stats:
-            # Update result with computed statistics
+        # Read and compute
+        try:
+            with open(bin_file, 'rb') as f:
+                data = np.frombuffer(f.read(), dtype=np.uint8)
+            
+            if len(data) == 0:
+                self.logger.warning(f"Empty binary file: {bin_file}")
+                return stats_result
+            
+            # Delegate to stats module
+            stats = compute_binary_statistics(data, correlation_lags=correlation_lags)
+            
+            # Log summary
+            self.logger.info(f"Binary statistics for {bin_file.name}:")
+            self.logger.info(f"  Samples: {stats['n_samples']:,}")
+            self.logger.info(f"  Mean: {stats['mean']:.6f}")
+            self.logger.info(f"  Variance: {stats['variance']:.6f}")
+            if 1 in stats['correlations']:
+                self.logger.info(f"  Correlation (lag=1): {stats['correlations'][1]:.6f}")
+            
+            # Flatten for CSV export
             stats_result['mean'] = stats['mean']
             stats_result['variance'] = stats['variance']
-            
-            # Add correlation values
             for lag in correlation_lags:
                 if lag in stats['correlations']:
                     stats_result[f'corr_lag_{lag}'] = stats['correlations'][lag]
-        
-        return stats_result
+            
+            return stats_result
+                
+        except Exception as e:
+            self.logger.error(f"Error computing binary statistics for {bin_file}: {e}")
+            return stats_result
 
-    def _get_binary_statistics_columns(self, correlation_lags=None):
+    def _get_binary_statistics_column_names(self, correlation_lags=None):
         """
         Get list of column names for binary statistics.
         
