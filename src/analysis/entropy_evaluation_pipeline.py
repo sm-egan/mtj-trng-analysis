@@ -47,12 +47,12 @@ class EntropyEvaluationPipeline:
         self.logger = logging.getLogger(__name__)
     
 
-    def evaluate_entropy(self, 
+    def evaluate_entropy(self,
                         device_id: str,
                         polars_expr: Optional[pl.Expr] = None,
                         run_ids: Optional[List[str]] = None,
                         xor_levels: List[int] = [1, 2, 4, 8],
-                        xor_overlaps: Optional[Dictionary[List[int]]] = None,
+                        xor_overlaps: Optional[dict] = None,
                         skip_existing: bool = True,
                         tests: List[str] = ['non_iid', 'iid']):
         """
@@ -114,39 +114,41 @@ class EntropyEvaluationPipeline:
             
             # Run IID and non-IID tests
             for test in basic_tests:
-                for xor_n in xor_levels:                
+                for xor_n in xor_levels:
+                    # Build list of (process_name, overlap) tuples to process
                     if xor_n == 1:
-                        process_name = "raw"
+                        # Raw data - no overlap needed
+                        process_list = [("raw", None)]
                     else:
-                        process_name = f"xor{xor_n}"
-                        if xor_overlap:
-                            for overlap in xor_overlaps[xor_n]:
-                                process_name = process_name + f"_o{overlap}"
-
-                    # Store hash for each process level
-                    process_hashes[process_name] = raw_hash
-
-                    bin_dir = self.output_base / device_id / process_name            
-                    bin_file = bin_dir / f"{raw_hash}.bin"
-
-                    if not (bin_file.exists() and skip_existing):
-                        if process_name == "raw":
-                            processed_data = binary_data
+                        # Get overlaps for this xor_n level, default to [0] if not specified
+                        if xor_overlaps is None:
+                            overlaps = [0]
                         else:
-                            self.logger.info(f"Applying XOR-{xor_n} whitening")
-                            if xor_overlap:
-                                for overlap in xor_overlaps[xor_n]:
-                                    processed_data = xorn_whitening(binary_data, n=xor_n, overlap=overlap)
+                            overlaps = xor_overlaps.get(xor_n, [0])
+                        process_list = [(f"xor{xor_n}_o{overlap}", overlap) for overlap in overlaps]
+
+                    # Process each (xor_level, overlap) combination independently
+                    for process_name, overlap in process_list:
+                        # Store hash for each process level
+                        process_hashes[process_name] = raw_hash
+
+                        bin_dir = self.output_base / device_id / process_name
+                        bin_file = bin_dir / f"{raw_hash}.bin"
+
+                        if not (bin_file.exists() and skip_existing):
+                            if process_name == "raw":
+                                processed_data = binary_data
                             else:
-                                processed_data = xorn_whitening(binary_data, n=xor_n, overlap=0)
+                                self.logger.info(f"Applying XOR-{xor_n} whitening with overlap={overlap}")
+                                processed_data = xorn_whitening(binary_data, n=xor_n, overlap=overlap)
 
-                        self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
-                        # Export binary file
-                        bin_file = self.export_binary(device_id, process_name, processed_data, 
-                                                    raw_hash, skip_existing)
+                            self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
+                            # Export binary file
+                            bin_file = self.export_binary(device_id, process_name, processed_data,
+                                                        raw_hash, skip_existing)
 
-                    self.run_test(device_id, process_name, bin_file, raw_hash, 
-                                test, skip_existing, metadata_str)
+                        self.run_test(device_id, process_name, bin_file, raw_hash,
+                                    test, skip_existing, metadata_str)
         
         # Run restart tests if requested
         if run_restart:
@@ -182,14 +184,20 @@ class EntropyEvaluationPipeline:
             else:
                 # No basic tests were run, so process all existing files
                 self.logger.info("Running restart tests for all existing test results...")
-                
+
                 # Determine which processes to check based on xor_levels
                 process_names_to_check = []
                 for xor_n in xor_levels:
                     if xor_n == 1:
                         process_names_to_check.append("raw")
                     else:
-                        process_names_to_check.append(f"xor{xor_n}")
+                        # Build process names for all overlaps
+                        if xor_overlaps is None:
+                            overlaps = [0]
+                        else:
+                            overlaps = xor_overlaps.get(xor_n, [0])
+                        for overlap in overlaps:
+                            process_names_to_check.append(f"xor{xor_n}_o{overlap}")
                 
                 # Create restart binaries for all existing files
                 self.logger.info(f"Creating restart samples for device {device_id}...")
