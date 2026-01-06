@@ -52,7 +52,7 @@ class EntropyEvaluationPipeline:
                         polars_expr: Optional[pl.Expr] = None,
                         run_ids: Optional[List[str]] = None,
                         xor_levels: List[int] = [1, 2, 4, 8],
-                        xor_method: str = "nonoverlapping",
+                        xor_overlaps: Optional[Dictionary[List[int]]] = None,
                         skip_existing: bool = True,
                         tests: List[str] = ['non_iid', 'iid']):
         """
@@ -63,6 +63,7 @@ class EntropyEvaluationPipeline:
             polars_expr: Polars expression for filtering runs
             run_ids: List of specific run IDs (must be pre-sorted by row_number!)
             xor_levels: List of XOR whitening levels (1 means raw)
+            xor_overlap: Overlap of XOR whitening windows (0 is non-overlapping). Should be a dictionary indexed by the XOR level e.g. {2: [0,1], 4:[0,1,2,3], 8:[0,1,2,3,4,5,6,7]}
             skip_existing: Skip if output files already exist
             tests: Which tests to run ('iid', 'non_iid', 'restart')
                 Note: 'restart' requires 'iid' to run first, and 'non_iid' if IID fails
@@ -118,8 +119,9 @@ class EntropyEvaluationPipeline:
                         process_name = "raw"
                     else:
                         process_name = f"xor{xor_n}"
-                        if xor_method == "rolling":
-                            process_name = process_name + "_r"
+                        if xor_overlap:
+                            for overlap in xor_overlaps[xor_n]:
+                                process_name = process_name + f"_o{overlap}"
 
                     # Store hash for each process level
                     process_hashes[process_name] = raw_hash
@@ -132,7 +134,11 @@ class EntropyEvaluationPipeline:
                             processed_data = binary_data
                         else:
                             self.logger.info(f"Applying XOR-{xor_n} whitening")
-                            processed_data = xorn_whitening(binary_data, n=xor_n, method=xor_method)
+                            if xor_overlap:
+                                for overlap in xor_overlaps[xor_n]:
+                                    processed_data = xorn_whitening(binary_data, n=xor_n, overlap=overlap)
+                            else:
+                                processed_data = xorn_whitening(binary_data, n=xor_n, overlap=0)
 
                         self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
                         # Export binary file

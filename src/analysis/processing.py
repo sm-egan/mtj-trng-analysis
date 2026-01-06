@@ -129,46 +129,123 @@ def calculate_switching_probability(measurements, threshold=None, group_by=None)
         
         return result
 
-def xorn_whitening(binary_data, n=2, method="nonoverlapping", rolling_lag=1, verbose=False):
+# def xorn_whitening(binary_data, n=2, method="nonoverlapping", rolling_lag=1, verbose=False):
+#     L = len(binary_data)
+
+#     if method == "nonoverlapping":
+#         nout = int(L / n)
+
+#         if not (L / n).is_integer():
+#             binary_data = binary_data[0:nout * n]
+        
+#         # Implement n bit XOR whitening
+#         xorn = np.sum(binary_data.reshape(nout, n),  axis=1) % 2
+
+#     elif method == "rolling":
+#         nout = L - n + 1
+        
+#         rolling_data = binary_data.copy()
+#         for i in range(1, n):
+#             rolling_data += np.roll(binary_data, -i)
+#         xorn = rolling_data[:nout] % 2 
+#         if rolling_lag < n:
+#             #To implement rolling lag, just take a subset of the bitstream computed with the simple roll
+#             ## Why this works: We still want to use sequential bits as XOR inputs, and the loop from 1 to n with np.roll
+#             ## is a nice simple way to implement this. Then we control how much the windows overlap with the lag parameter
+#             ## if n = rolling_lag, this is equivalent to non-overlapping
+#             if rolling_lag > 1:
+#                 xorn = xorn[::rolling_lag]
+#         else:
+#             print('WARNING: rolling_lag >= n, either use nonoverlapping method or decrease rolling_lag. Returning None')
+#             return None
+
+#     if verbose:
+#         print(f'Performing XOR{n} whitening')
+#         print('Input:')
+#         print(binary_data[0:10 * n])
+#         print('\n\nOutput:')
+
+#         print('---------------------')
+#         if method == "nonoverlapping":
+#             print(xorn[0:10])
+#         elif method == "rolling":
+#             print(xorn[0:10 * n])
+
+#     return xorn.astype(np.uint8)
+
+def xorn_whitening(binary_data, n=2, overlap=0, verbose=False):
+    """
+    Apply XOR-based whitening to binary random data.
+    
+    XOR whitening extracts randomness by combining multiple bits via XOR operation.
+    This reduces certain types of bias in raw random number generator output.
+    
+    Parameters
+    ----------
+    binary_data : array-like
+        Input binary sequence (values should be 0 or 1)
+    n : int, default=2
+        Number of bits to XOR together (window size)
+    overlap : int, default=0
+        Number of bits shared between consecutive windows
+        - overlap=0: non-overlapping chunks (extracts L/n bits)
+        - overlap>0: rolling window (extracts more bits, higher correlation)
+    
+    Returns
+    -------
+    np.ndarray (uint8)
+        Whitened binary sequence
+        
+    Raises
+    ------
+    ValueError
+        If overlap >= n (invalid: would reuse all bits or more)
+    
+    Notes
+    -----
+    Non-overlapping mode (overlap=0): Independent output bits, compression ratio n:1
+    Overlapping mode (overlap>0): Correlated output bits, less compression
+    
+    Examples
+    --------
+    >>> data = np.array([1, 0, 1, 1, 0, 0, 1, 0])
+    >>> xorn_whitening(data, n=2, overlap=0)  # XOR pairs: [1^0, 1^1, 0^0, 1^0]
+    array([1, 0, 0, 1], dtype=uint8)
+    """
+
     L = len(binary_data)
 
-    if method == "nonoverlapping":
-        nout = int(L / n)
+    if overlap == 0:
+        # Non-overlapping mode: split into chunks of n bits
+        nout = L // n
 
+        # Truncate input to exact multiple of n
         if not (L / n).is_integer():
             binary_data = binary_data[0:nout * n]
         
         # Implement n bit XOR whitening
         xorn = np.sum(binary_data.reshape(nout, n),  axis=1) % 2
 
-    elif method == "rolling":
-        nout = L - n + 1
-        
-        rolling_data = binary_data.copy()
-        for i in range(1, n):
-            rolling_data += np.roll(binary_data, -i)
-        xorn = rolling_data[:nout] % 2 
-        if rolling_lag < n:
-            #To implement rolling lag, just take a subset of the bitstream computed with the simple roll
-            ## Why this works: We still want to use sequential bits as XOR inputs, and the loop from 1 to n with np.roll
-            ## is a nice simple way to implement this. Then we control how much the windows overlap with the lag parameter
-            ## if n = rolling_lag, this is equivalent to non-overlapping
-            if rolling_lag > 1:
-                xorn = xorn[::rolling_lag]
-        else:
-            print('WARNING: rolling_lag >= n, either use nonoverlapping method or decrease rolling_lag. Returning None')
-            return None
+    else:
+        # Overlapping mode: rolling window XOR
+        if overlap > n - 1:
+            raise ValueError(f"overlap must be less than n. Got overlap={overlap}, n={n}")
 
-    if verbose:
-        print(f'Performing XOR{n} whitening')
-        print('Input:')
-        print(binary_data[0:10 * n])
-        print('\n\nOutput:')
+        skip = n - overlap
 
-        print('---------------------')
-        if method == "nonoverlapping":
-            print(xorn[0:10])
-        elif method == "rolling":
-            print(xorn[0:10 * n])
+        # Calculate number of valid windows
+        # Last window must start at position ≤ (L - n) to have n bits
+        nout = (L - n) // skip + 1
+
+        # Start with first bit of each window (sampled every 'skip' positions)
+        sum_arr = binary_data[::skip][:nout]
+
+        # Add remaining bits from each window using np.roll to shift
+        # np.roll shifts array so bit at position i moves to position 0
+        for i in range(1,n):
+            sum_arr = sum_arr + binary_data[i::skip][:nout] #Use np.roll to add adjacent bits
+
+        # Final XOR via modulo 2
+        xorn = sum_arr % 2
 
     return xorn.astype(np.uint8)
