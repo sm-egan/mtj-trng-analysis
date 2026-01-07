@@ -54,10 +54,12 @@ class EntropyEvaluationPipeline:
                         xor_levels: List[int] = [1, 2, 4, 8],
                         xor_overlaps: Optional[dict] = None,
                         skip_existing: bool = True,
-                        tests: List[str] = ['non_iid', 'iid']):
+                        tests: List[str] = ['non_iid', 'iid'],
+                        auto_group: bool = True,
+                        group_by: List[str] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]):
         """
         Evaluate entropy for a specific device
-        
+
         Args:
             device_id: Device ID to process (e.g., "07_08")
             polars_expr: Polars expression for filtering runs
@@ -67,16 +69,21 @@ class EntropyEvaluationPipeline:
             skip_existing: Skip if output files already exist
             tests: Which tests to run ('iid', 'non_iid', 'restart')
                 Note: 'restart' requires 'iid' to run first, and 'non_iid' if IID fails
-            
+            auto_group: If True, automatically process each unique combination of group_by columns separately.
+                If False and multiple groups detected, raises an error.
+            group_by: Columns to group by when detecting unique parameter combinations.
+                Default: ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]
+
         Example:
-            # Run all tests including restart
+            # Run all tests including restart, auto-grouping by pulse/field parameters
             pipeline.evaluate_entropy(
                 device_id="07_08",
-                polars_expr=(pl.col("field") == 10.0),
+                polars_expr=(pl.col("row_number").is_between(1, 100)),
                 xor_levels=[1, 2, 4, 8],
-                tests=['iid', 'non_iid', 'restart']
+                tests=['iid', 'non_iid', 'restart'],
+                auto_group=True  # Automatically processes each unique parameter combination
             )
-            
+
             # Run only restart tests (assumes IID/non-IID already completed)
             pipeline.evaluate_entropy(
                 device_id="07_08",
@@ -89,182 +96,271 @@ class EntropyEvaluationPipeline:
         invalid_tests = set(tests) - valid_tests
         if invalid_tests:
             raise ValueError(f"Invalid test types: {invalid_tests}. Valid options: {valid_tests}")
-        
+
         # Check if restart is requested without prerequisite tests
         if 'restart' in tests:
             if 'iid' not in tests:
                 self.logger.warning("Restart tests require IID results. Will check for existing IID results.")
-        
-        # Separate restart from other tests
-        basic_tests = [t for t in tests if t != 'restart']
-        run_restart = 'restart' in tests
-        
-        # Store hashes for each process level for restart tests
-        process_hashes = {}
-        
-        # Run basic tests if requested
-        if basic_tests:
-            # Get binary data
-            binary_data, raw_hash, sp, metadata_str = self.get_binary_data(device_id, polars_expr, run_ids)
-            if binary_data is None:
-                self.logger.warning("No data found matching criteria")
+
+        # Prepare groups to process
+        # If auto_group is enabled and we have a polars expression, detect groups
+        # Otherwise, treat the entire input as a single group
+        groups_to_process = []
+
+        if auto_group and polars_expr is not None:
+            # Query runs to detect groups
+            device_filter = (pl.col("device_id") == device_id) & polars_expr
+
+            with sqlite3.connect(self.dm.db_path) as conn:
+                runs_df = pl.read_database("SELECT * FROM runs", conn)
+
+            df = runs_df.filter(device_filter).sort("row_number")
+
+            if len(df) == 0:
+                self.logger.warning(f"No runs found for device {device_id} matching expression")
                 return
-            
-            self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
-            
-            # Run IID and non-IID tests
-            for test in basic_tests:
-                for xor_n in xor_levels:
-                    # Build list of (process_name, overlap) tuples to process
-                    if xor_n == 1:
-                        # Raw data - no overlap needed
-                        process_list = [("raw", None)]
-                    else:
-                        # Get overlaps for this xor_n level, default to [0] if not specified
-                        if xor_overlaps is None:
-                            overlaps = [0]
+
+            # Group by the specified columns
+            df_grouped = df.group_by(group_by, maintain_order=True)
+            num_groups = df_grouped.len().height
+
+            if num_groups > 1:
+                # Multiple groups detected - prepare to process each separately
+                self.logger.info(f"Auto-grouping: Found {num_groups} unique parameter combinations")
+
+                for group_key, group_data in df_grouped:
+                    group_desc = ", ".join([f"{col}={val}" for col, val in zip(group_by, group_key)])
+                    group_run_ids = group_data.sort("row_number")['run_id'].to_list()
+                    groups_to_process.append((group_desc, group_run_ids))
+            else:
+                # Single group - process normally
+                groups_to_process.append((None, run_ids))
+        else:
+            # No auto-grouping - single group
+            groups_to_process.append((None, run_ids))
+
+        # Process each group
+        total_groups = len(groups_to_process)
+        for group_idx, (group_desc, group_run_ids) in enumerate(groups_to_process, 1):
+            if group_desc:
+                # Log group information for multi-group processing
+                self.logger.info(f"\n{'='*80}")
+                self.logger.info(f"Processing group {group_idx}/{total_groups}: {group_desc}")
+                self.logger.info(f"{'='*80}")
+
+            # Separate restart from other tests
+            basic_tests = [t for t in tests if t != 'restart']
+            run_restart = 'restart' in tests
+
+            # Store hashes for each process level for restart tests
+            process_hashes = {}
+
+            # Run basic tests if requested
+            if basic_tests:
+                # Get binary data
+                binary_data, raw_hash, sp, metadata_str = self.get_binary_data(
+                    device_id, polars_expr, group_run_ids, group_by=group_by, auto_group=False
+                )
+                if binary_data is None:
+                    self.logger.warning("No data found matching criteria")
+                    continue  # Skip to next group
+
+                self.logger.info(f"Device {device_id}: {len(binary_data):,} samples, p = {sp:.5f}")
+
+                # Run IID and non-IID tests
+                for test in basic_tests:
+                    for xor_n in xor_levels:
+                        # Build list of (process_name, overlap) tuples to process
+                        if xor_n == 1:
+                            # Raw data - no overlap needed
+                            process_list = [("raw", None)]
                         else:
-                            overlaps = xor_overlaps.get(xor_n, [0])
-                        process_list = [(f"xor{xor_n}_o{overlap}", overlap) for overlap in overlaps]
-
-                    # Process each (xor_level, overlap) combination independently
-                    for process_name, overlap in process_list:
-                        # Store hash for each process level
-                        process_hashes[process_name] = raw_hash
-
-                        bin_dir = self.output_base / device_id / process_name
-                        bin_file = bin_dir / f"{raw_hash}.bin"
-
-                        if not (bin_file.exists() and skip_existing):
-                            if process_name == "raw":
-                                processed_data = binary_data
+                            # Get overlaps for this xor_n level, default to [0] if not specified
+                            if xor_overlaps is None:
+                                overlaps = [0]
                             else:
-                                self.logger.info(f"Applying XOR-{xor_n} whitening with overlap={overlap}")
-                                processed_data = xorn_whitening(binary_data, n=xor_n, overlap=overlap)
+                                overlaps = xor_overlaps.get(xor_n, [0])
+                            process_list = [(f"xor{xor_n}_o{overlap}", overlap) for overlap in overlaps]
 
-                            self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
-                            # Export binary file
-                            bin_file = self.export_binary(device_id, process_name, processed_data,
-                                                        raw_hash, skip_existing)
+                        # Process each (xor_level, overlap) combination independently
+                        for process_name, overlap in process_list:
+                            # Store hash for each process level
+                            process_hashes[process_name] = raw_hash
 
-                        self.run_test(device_id, process_name, bin_file, raw_hash,
-                                    test, skip_existing, metadata_str)
-        
-        # Run restart tests if requested
-        if run_restart:
-            self.logger.info("\n" + "="*80)
-            self.logger.info("Starting restart tests")
-            self.logger.info("="*80)
-            
-            # If we just ran basic tests, we know which files to process
-            if process_hashes:
-                # Create restart binaries for the files we just processed
-                for process_name, file_hash in process_hashes.items():
-                    self.logger.info(f"\nCreating restart samples for {device_id}/{process_name}/{file_hash[:12]}...")
+                            bin_dir = self.output_base / device_id / process_name
+                            bin_file = bin_dir / f"{raw_hash}.bin"
+
+                            if not (bin_file.exists() and skip_existing):
+                                if process_name == "raw":
+                                    processed_data = binary_data
+                                else:
+                                    self.logger.info(f"Applying XOR-{xor_n} whitening with overlap={overlap}")
+                                    processed_data = xorn_whitening(binary_data, n=xor_n, overlap=overlap)
+
+                                self.logger.info(f"    P(X=1) = {np.average(processed_data):.7f}")
+                                # Export binary file
+                                bin_file = self.export_binary(device_id, process_name, processed_data,
+                                                            raw_hash, skip_existing)
+
+                            self.run_test(device_id, process_name, bin_file, raw_hash,
+                                        test, skip_existing, metadata_str)
+
+            # Run restart tests if requested
+            if run_restart:
+                self.logger.info("\n" + "="*80)
+                self.logger.info("Starting restart tests")
+                self.logger.info("="*80)
+
+                # If we just ran basic tests, we know which files to process
+                if process_hashes:
+                    # Create restart binaries for the files we just processed
+                    for process_name, file_hash in process_hashes.items():
+                        self.logger.info(f"\nCreating restart samples for {device_id}/{process_name}/{file_hash[:12]}...")
+                        self.export_restart_binaries(
+                            device_id=device_id,
+                            process_names=process_name,
+                            file_hash=file_hash,
+                            skip_existing=skip_existing
+                        )
+
+                    # Run restart tests for these specific files
+                    self.logger.info("\nRunning restart tests...")
+                    for process_name, file_hash in process_hashes.items():
+                        tasks = self.create_restart_test_plan(
+                            device_id=device_id,
+                            process_names=process_name,
+                            file_hash=file_hash
+                        )
+                        if tasks:
+                            self.run_restart_tests(tasks=tasks, skip_existing=skip_existing)
+                        else:
+                            self.logger.warning(f"No restart tests available for {device_id}/{process_name}/{file_hash[:12]}...")
+
+                else:
+                    # No basic tests were run, so process all existing files
+                    self.logger.info("Running restart tests for all existing test results...")
+
+                    # Determine which processes to check based on xor_levels
+                    process_names_to_check = []
+                    for xor_n in xor_levels:
+                        if xor_n == 1:
+                            process_names_to_check.append("raw")
+                        else:
+                            # Build process names for all overlaps
+                            if xor_overlaps is None:
+                                overlaps = [0]
+                            else:
+                                overlaps = xor_overlaps.get(xor_n, [0])
+                            for overlap in overlaps:
+                                process_names_to_check.append(f"xor{xor_n}_o{overlap}")
+
+                    # Create restart binaries for all existing files
+                    self.logger.info(f"Creating restart samples for device {device_id}...")
                     self.export_restart_binaries(
                         device_id=device_id,
-                        process_names=process_name,
-                        file_hash=file_hash,
+                        process_names=process_names_to_check,
                         skip_existing=skip_existing
                     )
-                
-                # Run restart tests for these specific files
-                self.logger.info("\nRunning restart tests...")
-                for process_name, file_hash in process_hashes.items():
-                    tasks = self.create_restart_test_plan(
-                        device_id=device_id,
-                        process_names=process_name,
-                        file_hash=file_hash
-                    )
-                    if tasks:
-                        self.run_restart_tests(tasks=tasks, skip_existing=skip_existing)
-                    else:
-                        self.logger.warning(f"No restart tests available for {device_id}/{process_name}/{file_hash[:12]}...")
-            
-            else:
-                # No basic tests were run, so process all existing files
-                self.logger.info("Running restart tests for all existing test results...")
 
-                # Determine which processes to check based on xor_levels
-                process_names_to_check = []
-                for xor_n in xor_levels:
-                    if xor_n == 1:
-                        process_names_to_check.append("raw")
-                    else:
-                        # Build process names for all overlaps
-                        if xor_overlaps is None:
-                            overlaps = [0]
-                        else:
-                            overlaps = xor_overlaps.get(xor_n, [0])
-                        for overlap in overlaps:
-                            process_names_to_check.append(f"xor{xor_n}_o{overlap}")
-                
-                # Create restart binaries for all existing files
-                self.logger.info(f"Creating restart samples for device {device_id}...")
-                self.export_restart_binaries(
-                    device_id=device_id,
-                    process_names=process_names_to_check,
-                    skip_existing=skip_existing
-                )
-                
-                # Run restart tests
-                self.run_restart_tests(
-                    device_id=device_id,
-                    process_names=process_names_to_check,
-                    skip_existing=skip_existing
-                )
-        
+                    # Run restart tests
+                    self.run_restart_tests(
+                        device_id=device_id,
+                        process_names=process_names_to_check,
+                        skip_existing=skip_existing
+                    )
+
+        # Log completion message after all groups are processed
+        if total_groups > 1:
+            self.logger.info(f"\n{'='*80}")
+            self.logger.info(f"Completed processing all {total_groups} groups")
+            self.logger.info(f"{'='*80}")
+
         self.logger.info("\nEntropy evaluation complete.")
     
-    def get_binary_data(self, device_id: str, polars_expr: Optional[pl.Expr], 
-                        run_ids: Optional[List[str]], 
-                        group_by: Optional[list] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]) -> Tuple[Optional[np.ndarray], str, float, str]:
+    def get_binary_data(self, device_id: str, polars_expr: Optional[pl.Expr],
+                        run_ids: Optional[List[str]],
+                        group_by: List[str] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"],
+                        auto_group: bool = False) -> Tuple[Optional[np.ndarray], str, float, str]:
         """
         Get binary data from runs for a specific device
         TO DO: ADD FUNCTIONALITY TO THIS METHOD TO CHECK IF # MEASUREMENTS IS DOUBLE THE # OF REPEATS.
         IF SO, USE SLICING METHOD FROM DEVICE 027_12 NOTEBOOK TO SEPARATE RESET AND PERTURB MEASUREMENTS
-        
+
+        Args:
+            device_id: Device ID to process
+            polars_expr: Polars expression for filtering runs
+            run_ids: List of specific run IDs
+            group_by: Columns to check for unique parameter combinations
+            auto_group: If False and multiple groups detected, raises an error
+
         Returns:
-            Tuple of (binary_array, hash, switching_probability) or (None, "", 0.0) if no data
+            Tuple of (binary_array, hash, switching_probability, metadata_str) or (None, "", 0.0, "") if no data
         """
         # Get run IDs to process
+        # We need to query the database in both cases to get group information for metadata
         if run_ids:
-            # Direct path - skip database query for device_id
+            # Direct path with run_ids - still need to query for metadata
             runs_to_fetch = run_ids
             self.logger.info(f"Using {len(runs_to_fetch)} specified run IDs for device {device_id}")
-                
-        elif polars_expr is not None:
-            self.logger.info("Applying Polars expression to filter runs")
-            
-            # Add device filter to expression
-            device_filter = (pl.col("device_id") == device_id) & polars_expr
-            
+
+            # Query database to get group information for these run_ids
             with sqlite3.connect(self.dm.db_path) as conn:
                 runs_df = pl.read_database("SELECT * FROM runs", conn)
-            
+
+            # Filter to just the specified run_ids and sort
+            df = runs_df.filter(pl.col("run_id").is_in(run_ids)).sort("row_number")
+
+            if len(df) == 0:
+                self.logger.warning(f"No runs found matching provided run_ids")
+                return None, "", 0.0, ""
+
+        elif polars_expr is not None:
+            self.logger.info("Applying Polars expression to filter runs")
+
+            # Add device filter to expression
+            device_filter = (pl.col("device_id") == device_id) & polars_expr
+
+            with sqlite3.connect(self.dm.db_path) as conn:
+                runs_df = pl.read_database("SELECT * FROM runs", conn)
+
             # Sorting by row_number extremely important for preserving sequential order of bits
             ## Otherwise entropy may be over-estimated
             df = runs_df.filter(device_filter).sort("row_number")
 
-            df_group_by = df.group_by(group_by, maintain_order=True)
-            if df_group_by.len().height > 1:
-                self.logger.warning("Combining runs with different pulse/field parameters in binary data")
-            
             if len(df) == 0:
                 self.logger.warning(f"No runs found for device {device_id} matching expression")
-                return None, "", 0.0
-            
-            runs_to_fetch = df['run_id'].to_list()
-            
+                return None, "", 0.0, ""
+
         else:
             self.logger.error("Must provide run_ids or polars_expr")
-            return None, "", 0.0
+            return None, "", 0.0, ""
+
+        # Check for multiple groups (common to both run_ids and polars_expr paths)
+        df_group_by = df.group_by(group_by, maintain_order=True)
+        num_groups = df_group_by.len().height
+
+        if num_groups > 1:
+            if not auto_group:
+                # Raise error if auto_group is False and multiple groups detected
+                group_info = df_group_by.len()
+                error_msg = (
+                    f"Found {num_groups} different combinations of {group_by} parameters. "
+                    f"Set auto_group=True to process each combination separately, "
+                    f"or refine your polars_expr to select a single combination.\n"
+                    f"Groups found:\n{group_info}"
+                )
+                raise ValueError(error_msg)
+            # If auto_group is True, this should have been handled in evaluate_entropy
+            # This branch shouldn't normally be reached
+
+        # Get the run_ids to fetch
+        runs_to_fetch = df['run_id'].to_list()
         
         # Get measurements
         measurements_df = self.dm.get_measurements(runs_to_fetch)
         if measurements_df.shape[0] == 0:
             self.logger.warning(f"No measurements found")
-            return None, "", 0.0
+            return None, "", 0.0, ""
         
         # Stack and convert to binary
         stacked_df = self.dm.stack_measurements(measurements_df)
@@ -533,14 +629,25 @@ class EntropyEvaluationPipeline:
                     # Parse IID results
                     iid_path = self.results_base / current_device_id / current_process / 'iid' / f"{current_hash}.txt"
                     iid_h, iid_failed = self.parse_test_result_file(iid_path)
-                    
+
                     if iid_h is None:
                         self.logger.warning(f"No IID results for {current_device_id}/{current_process}/{current_hash[:12]}...")
                         continue
-                    
+
+                    # Check if non-IID results exist (needed as fallback if restart files fail IID)
+                    non_iid_path = self.results_base / current_device_id / current_process / 'non_iid' / f"{current_hash}.txt"
+                    non_iid_h, _ = self.parse_test_result_file(non_iid_path)
+
                     # Determine test type based on IID results
                     if not iid_failed:
                         # IID passed - use IID restart
+                        if non_iid_h is None:
+                            self.logger.warning(
+                                f"Planning IID restart tests for {current_device_id}/{current_process}/{current_hash[:12]}, "
+                                f"but no non-IID results available. If individual restart files fail IID, "
+                                f"they cannot be re-run as non-IID. Consider running non-IID tests first."
+                            )
+
                         task = {
                             'device_id': current_device_id,
                             'process_name': current_process,
@@ -577,11 +684,11 @@ class EntropyEvaluationPipeline:
         
         return tasks
 
-    def run_restart_tests(self, tasks=None, device_id=None, process_names=None, 
+    def run_restart_tests(self, tasks=None, device_id=None, process_names=None,
                         file_hash=None, skip_existing=True):
         """
         Run restart tests based on a task list or criteria.
-        
+
         Args:
             tasks: List of restart test tasks from create_restart_test_plan()
                 If None, will create task list using other parameters
@@ -589,7 +696,7 @@ class EntropyEvaluationPipeline:
             process_names: Specific processes (used if tasks is None)
             file_hash: Specific file hash (used if tasks is None)
             skip_existing: Skip if restart test results already exist
-            
+
         Returns:
             dict: Summary of test results
         """
@@ -597,76 +704,116 @@ class EntropyEvaluationPipeline:
         if tasks is None:
             self.logger.info("Creating restart test plan...")
             tasks = self.create_restart_test_plan(device_id, process_names, file_hash)
-            
+
         if not tasks:
             self.logger.warning("No restart tests to run")
             return {}
-        
+
         self.logger.info(f"Running {len(tasks)} restart test sets")
-        
+
         # Check if ea_restart binary exists
         ea_restart = self.ea_path / 'ea_restart'
         if not ea_restart.exists():
             raise FileNotFoundError(f"ea_restart not found at {ea_restart}")
-        
+
         summary = {
             'total_tasks': len(tasks),
             'completed': 0,
             'skipped': 0,
             'failed': 0,
+            'rerun_as_non_iid': 0,
             'results': []
         }
-        
+
         for task_idx, task in enumerate(tasks):
             self.logger.info(f"\nProcessing task {task_idx + 1}/{len(tasks)}: "
                             f"{task['device_id']}/{task['process_name']}/{task['file_hash'][:12]}...")
-            
+
             # Get metadata from the source test file
             metadata_str = self._extract_metadata_from_test_results(task)
-            
+
             # Process each restart file
             task_results = {
                 'task': task,
-                'restart_results': []
+                'restart_results': [],
+                'rerun_files': []
             }
-            
+
+            failed_iid_files = []
+
             for i in range(task['num_restart_files']):
                 restart_file = task['restart_dir'] / f"{i}.bin"
-                
+
                 # Determine output path
                 results_dir = self.results_base / task['device_id'] / task['process_name'] / 'restart' / task['file_hash']
                 results_dir.mkdir(parents=True, exist_ok=True)
                 results_file = results_dir / f"{i}.txt"
-                
+
                 # Check if should skip
                 if results_file.exists() and skip_existing:
                     self.logger.info(f"  Skipping restart file {i} - results already exist")
                     summary['skipped'] += 1
                     continue
-                
+
                 # Run restart test
                 result = self._run_single_restart_test(
-                    ea_restart, restart_file, task['test_flag'], 
+                    ea_restart, restart_file, task['test_flag'],
                     task['h_original'], results_file, metadata_str
                 )
-                
+
                 if result['success']:
                     summary['completed'] += 1
                     task_results['restart_results'].append(result)
                     self.logger.info(f"  Restart file {i}: H_min = {result.get('h_final', 'N/A')}")
+
+                    # Check if IID test failed
+                    if task['test_flag'] == '-i' and not result.get('validation_passed', True):
+                        failed_iid_files.append(i)
                 else:
                     summary['failed'] += 1
                     self.logger.error(f"  Restart file {i}: Error running restart test")
-            
+
+            # Re-run failed IID restart tests as non-IID
+            if failed_iid_files and task['test_flag'] == '-i':
+                self.logger.warning(f"\n{len(failed_iid_files)} restart file(s) failed IID testing. Re-running as non-IID...")
+
+                # Get non-IID H_original
+                non_iid_path = self.results_base / task['device_id'] / task['process_name'] / 'non_iid' / f"{task['file_hash']}.txt"
+                non_iid_h, _ = self.parse_test_result_file(non_iid_path)
+
+                if non_iid_h is None:
+                    self.logger.error(f"No non-IID results found for {task['device_id']}/{task['process_name']}/{task['file_hash'][:12]}. Cannot re-run as non-IID.")
+                else:
+                    for file_num in failed_iid_files:
+                        restart_file = task['restart_dir'] / f"{file_num}.bin"
+                        results_file = results_dir / f"{file_num}.txt"
+
+                        self.logger.info(f"  Re-running restart file {file_num} with non-IID test...")
+
+                        # Run non-IID restart test
+                        result = self._run_single_restart_test(
+                            ea_restart, restart_file, '-n',
+                            non_iid_h, results_file, metadata_str
+                        )
+
+                        if result['success']:
+                            summary['rerun_as_non_iid'] += 1
+                            task_results['rerun_files'].append(file_num)
+                            self.logger.info(f"  Restart file {file_num} (non-IID): H_min = {result.get('h_final', 'N/A')}")
+                        else:
+                            self.logger.error(f"  Restart file {file_num} (non-IID): Error running restart test")
+
             summary['results'].append(task_results)
-        
+
         # Log summary
-        self.logger.debug(f"\nRestart test summary:")
-        self.logger.debug(f"  Total tasks: {summary['total_tasks']}")
-        self.logger.debug(f"  Completed tests: {summary['completed']}")
-        self.logger.debug(f"  Skipped tests: {summary['skipped']}")
-        self.logger.debug(f"  Failed tests: {summary['failed']}")
-        
+        self.logger.info(f"\nRestart test summary:")
+        self.logger.info(f"  Total tasks: {summary['total_tasks']}")
+        self.logger.info(f"  Completed tests: {summary['completed']}")
+        self.logger.info(f"  Skipped tests: {summary['skipped']}")
+        self.logger.info(f"  Failed tests: {summary['failed']}")
+        if summary['rerun_as_non_iid'] > 0:
+            self.logger.info(f"  Re-run as non-IID: {summary['rerun_as_non_iid']}")
+
         return summary
     
     def _run_single_restart_test(self, ea_restart, restart_file, test_flag, 
@@ -1092,22 +1239,26 @@ class EntropyEvaluationPipeline:
 
     def _get_unique_hashes(self, device_dir):
         device_path = Path(device_dir)
-        processing_levels = ['raw', 'xor2', 'xor4', 'xor8']
         test_types = ['iid', 'non_iid']
-        
+
         all_hashes = set()
-        
-        for proc_level in processing_levels:
+
+        # Get all process directories (raw, xor2_o0, xor4_o3, etc.)
+        # Filter out non-directories and special directories like 'restart'
+        process_dirs = [d for d in device_path.iterdir()
+                       if d.is_dir() and d.name != 'restart']
+
+        for proc_dir in process_dirs:
             for test_type in test_types:
-                dir_path = device_path / proc_level / test_type
-                
+                dir_path = proc_dir / test_type
+
                 if not dir_path.exists():
                     continue
-                
+
                 # Convert generator to set of stems, then union
                 dir_hashes = {txt_file.stem for txt_file in dir_path.glob('*.txt')}
                 all_hashes |= dir_hashes  # Union operator
-        
+
         return sorted(list(all_hashes))
 
     def _parse_iid_non_iid_result_file(self, result_file, test_type=None, find_metadata=False):
@@ -1165,19 +1316,19 @@ class EntropyEvaluationPipeline:
     def _parse_restart_results(self, restart_result_dir):
         """
         Parse all restart test results in a directory.
-        
+
         Args:
             result_dir: Path to the directory containing restart test results
             get_metadata: If True, extract metadata from the results
-            
+
         Returns:
-            list: List of parsed results
+            dict: Parsed results including h_final, restart_pass, restart_type, and failed_files
         """
         result = {}
         if not restart_result_dir.exists():
             self.logger.warning(f"Restart result directory does not exist: {restart_result_dir}")
             return None
-        
+
         # Get all restart files for this hash
         restart_files = sorted(restart_result_dir.glob('*.txt'))
         self.logger.info(f"Found {len(restart_files)} restart files in {restart_result_dir}")
@@ -1185,12 +1336,13 @@ class EntropyEvaluationPipeline:
             # Process all restart files to find minimum entropy
             min_h = float('inf')
             all_passed = True
-            
+            failed_files = []
+
             for restart_file in restart_files:
                 try:
                     with open(restart_file, 'r') as f:
                         content = f.read()
-                    
+
                     # Extract restart test type
                     if 'ea_restart -i' in content:
                         restart_type = 'iid'
@@ -1199,7 +1351,8 @@ class EntropyEvaluationPipeline:
 
                     # Check pass/fail
                     if '** Failed' in content:
-                        all_passed = False #TO DO: IF THIS HAPPENS AND WE'RE DOING IID TESTS WE SHOULD SWITCH TO NON-IID
+                        all_passed = False
+                        failed_files.append(restart_file.stem)  # Store file number
 
                     # Extract min entropy
                     if 'min(H_r, H_c, H_I): ' in content:
@@ -1220,10 +1373,11 @@ class EntropyEvaluationPipeline:
             result['h_final'] = min_h
             result['restart_pass'] = all_passed
             result['restart_type'] = restart_type
+            result['failed_files'] = failed_files if failed_files else None
         else:
             self.logger.warning(f"No valid H values found in restart files for {restart_result_dir}")
             return None
-        
+
         return result
         
     def _parse_entropy_result_for_metadata(self, file_content):
