@@ -41,7 +41,7 @@ if __name__ == "__main__":
     
     # Test 1: Run restart tests for a specific hash
     # First, create a plan to get a hash
-    tasks = pipeline.create_restart_test_plan(device_id="011_08", process_names=["xor2", "xor4", "xor8"])
+    tasks = pipeline.create_restart_test_plan(device_id="011_08", process_names=["xor02", "xor04", "xor08"])
     
     if tasks:
         # Take just the first task for testing
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     print(f"\n\nTest 2: Running all restart tests for 011_08/raw")
     summary = pipeline.run_restart_tests(
         device_id="011_08",
-        process_names=["xor2", "xor4", "xor8"],
+        process_names=["xor02", "xor04", "xor08"],
         skip_existing=True  # Skip ones we just ran
     )
     

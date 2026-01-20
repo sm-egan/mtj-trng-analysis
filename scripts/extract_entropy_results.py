@@ -33,7 +33,7 @@ def load_config():
 def main():
     parser = argparse.ArgumentParser(description="Extract entropy test results to CSV")
     parser.add_argument("--device", help="Specific device ID (e.g., '07_08')")
-    parser.add_argument("--processes", nargs="+", help="Specific processes (e.g., raw xor2)")
+    parser.add_argument("--processes", nargs="+", help="Specific processes (e.g., raw xor02)")
     parser.add_argument("--filename", help="Output CSV filename (default: entropy_results_YYYYMMDD.csv)")
     
     args = parser.parse_args()

@@ -17,7 +17,7 @@ from src.analysis.entropy_evaluation_pipeline import EntropyEvaluationPipeline
 def main():
     parser = argparse.ArgumentParser(description="Test binary statistics computation")
     parser.add_argument("--device", required=True, help="Device ID (e.g., '011_08')")
-    parser.add_argument("--process", default="raw", help="Process type (e.g., 'raw', 'xor2')")
+    parser.add_argument("--process", default="raw", help="Process type (e.g., 'raw', 'xor02')")
     parser.add_argument("--hash", help="Specific file hash (if not provided, uses first .bin file found)")
     
     args = parser.parse_args()

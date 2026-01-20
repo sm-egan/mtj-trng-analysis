@@ -246,11 +246,11 @@ def update_file_content(file_path: Path, dry_run: bool = True) -> int:
 
 
 def find_files_to_update() -> List[Path]:
-    """Find all Python and notebook files that might contain xor references."""
+    """Find all Python, notebook, and CSV files that might contain xor references."""
     files = []
 
-    # Python files
-    for pattern in ['**/*.py', '**/*.ipynb']:
+    # Python, notebook, and CSV files
+    for pattern in ['**/*.py', '**/*.ipynb', '**/*.csv']:
         files.extend(PROJECT_ROOT.glob(pattern))
 
     # Exclude certain directories

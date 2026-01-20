@@ -411,7 +411,7 @@ class EntropyEvaluationPipeline:
         
         Args:
             device_id: Specific device to process (e.g., "07_08"). If None, process all.
-            process_names: List of process names (e.g., ["raw", "xor2"]). If None, process all.
+            process_names: List of process names (e.g., ["raw", "xor02"]). If None, process all.
             file_hash: Specific file hashes to process. If None, process all .bin files.
             samples_per_file: Number of samples per restart file (default 1,000,000)
             skip_existing: Skip if restart files already exist
@@ -426,7 +426,7 @@ class EntropyEvaluationPipeline:
         
         # Convert process_names to list if it's a string
         # if process_names is None:
-        #     process_names = ["raw","xor2","xor4","xor8"]
+        #     process_names = ["raw","xor02","xor04","xor08"]
         # elif process_names and isinstance(process_names, str):
         #     process_names = [process_names]
         # else:
@@ -1257,7 +1257,7 @@ class EntropyEvaluationPipeline:
 
         all_hashes = set()
 
-        # Get all process directories (raw, xor2_o0, xor4_o3, etc.)
+        # Get all process directories (raw, xor02_o0, xor04_o3, etc.)
         # Filter out non-directories and special directories like 'restart'
         process_dirs = [d for d in device_path.iterdir()
                        if d.is_dir() and d.name != 'restart']
@@ -1429,7 +1429,7 @@ class EntropyEvaluationPipeline:
         
         Args:
             device_id: Device ID
-            process_name: Process name (e.g., 'raw', 'xor2')
+            process_name: Process name (e.g., 'raw', 'xor02')
             file_hash: File hash
             correlation_lags: List of lags for autocorrelation (default: powers of 2 up to 2^20)
             

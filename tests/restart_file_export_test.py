@@ -44,12 +44,12 @@ if __name__ == "__main__":
         
         summary2 = pipeline.export_restart_binaries(
             device_id="07_08",
-            process_names="xor2",  # Process for xor2 version
+            process_names="xor02",  # Process for xor02 version
             file_hash=first_hash,
             skip_existing=False
         )
-        if summary2.get("07_08", {}).get("xor2", {}).get(first_hash):
-            print(f"Created {summary2['07_08']['xor2'][first_hash]} restart files for xor2")
+        if summary2.get("07_08", {}).get("xor02", {}).get(first_hash):
+            print(f"Created {summary2['07_08']['xor02'][first_hash]} restart files for xor02")
     
     # Test 3: Process a specific hash across ALL processes
     print("\n3. Testing with specific hash, searching all processes:")
