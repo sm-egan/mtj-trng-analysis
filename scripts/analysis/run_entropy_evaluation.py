@@ -56,8 +56,8 @@ if __name__ == "__main__":
     pipeline.evaluate_entropy(
         device_id="011_08",
         polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
-        xor_levels=[16, 24],
-        xor_overlaps={16 : [0], 24: [0]},
+        xor_levels=[12],
+        xor_overlaps={12 : [0]},
         tests=['non_iid', 'iid', 'restart'],
         skip_existing=True
     )
