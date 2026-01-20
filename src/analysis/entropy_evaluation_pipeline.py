@@ -1162,7 +1162,10 @@ class EntropyEvaluationPipeline:
                         'h_original_non_iid': None,
                         'h_final': None
                     }
-                    
+
+                    # Track if we found any test results for this process/hash combination
+                    found_results = False
+
                     get_metadata = True
                     for test_type in ['iid', 'non_iid', 'restart']:
                         test_dir = process_dir / test_type
@@ -1178,27 +1181,38 @@ class EntropyEvaluationPipeline:
                                 self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
                                 continue
 
+                            # Mark that we found at least one result file
+                            found_results = True
+
                             # Only get metadata if it's the first time parsing this file
                             parsed_result, metadata_found = self._parse_iid_non_iid_result_file(test_file, test_type=test_type, find_metadata=get_metadata)
                             # if _parse_iid_non_iid_result_file returned metadata_found, we can skip it next time
                             get_metadata = not metadata_found
-                            
+
                             if parsed_result:
                                 result.update(parsed_result)
                                 self.logger.info(f"{test_type.capitalize()} results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
-                        
+
                         elif test_type == 'restart':
                             restart_dir = test_dir / file_hash
                             if not restart_dir.exists():
                                 self.logger.warning(f"Missing restart results for {current_device}/{current_process}/{file_hash}...")
                                 continue
 
+                            # Mark that we found at least one result directory
+                            found_results = True
+
                             parsed_result = self._parse_restart_results(test_dir / file_hash)
                             self.logger.debug(f"Parsed restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                             if parsed_result:
                                 result.update(parsed_result)
                                 self.logger.info(f"Restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
-                    
+
+                    # Only add this row if we found at least one test result file
+                    if not found_results:
+                        self.logger.debug(f"No test results found for {current_device}/{current_process}/{file_hash}. Skipping row.")
+                        continue
+
                     # Add binary statistics to the result
                     if include_binary_stats:
                         binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags)

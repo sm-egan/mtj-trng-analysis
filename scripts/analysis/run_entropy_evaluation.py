@@ -44,11 +44,20 @@ if __name__ == "__main__":
     ###################################################
     ## Device 011_08
 
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
+    #     xor_levels=[1,2,4,8],
+    #     xor_overlaps={2 : [0,1], 4:[0,1,2,3], 8:[0,1,2,3,4,5,6,7]},
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
+
     pipeline.evaluate_entropy(
         device_id="011_08",
         polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
-        xor_levels=[1,2,4,8],
-        xor_overlaps={2 : [0,1], 4:[0,1,2,3], 8:[0,1,2,3,4,5,6,7]},
+        xor_levels=[16, 24],
+        xor_overlaps={16 : [0], 24: [0]},
         tests=['non_iid', 'iid', 'restart'],
         skip_existing=True
     )

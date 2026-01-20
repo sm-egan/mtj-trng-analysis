@@ -7,7 +7,10 @@ __all__ = [
     'visualize_peaks_polars',
     'plot_binomial_histogram',
     'plot_switching_scatter',
-    'plot_comparison_subplots'
+    'plot_comparison_subplots',
+    'plot_entropy_contour',
+    'plot_entropy_lines',
+    'plot_emphasis_circles'
 ]
 
 def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, 
@@ -364,5 +367,93 @@ def visualize_peaks_polars(df, threshold=None, peaks=None, sample_size=100000, b
     plt.xticks(fontsize=fontsize)
     plt.yticks(fontsize=fontsize)
     plt.legend(bbox_to_anchor=(0.5, legendy), loc='upper center', ncol=legend_ncol, fontsize=fontsize)
-    
+
     return fig
+
+
+def plot_entropy_contour(X, Y, Z, cmap='plasma', vmin=None, vmax=None, levels=None,
+                         ax=None, figsize=(8, 6), add_colorbar=True,
+                         contour_lines=False, contour_kwargs=None, **contourf_kwargs):
+    """
+    Create a filled contour plot from 2D meshgrid data.
+
+    This function is designed to work like matplotlib axis methods, creating only
+    the contour plot and colorbar while leaving all other customization (labels,
+    ticks, titles, etc.) to be added afterward by the user.
+
+    Args:
+        X: 2D array of x-coordinates (from np.meshgrid)
+        Y: 2D array of y-coordinates (from np.meshgrid)
+        Z: 2D array of z-values to plot
+        cmap: Colormap name (default: 'plasma')
+        vmin: Minimum value for colormap (default: None, uses data min)
+        vmax: Maximum value for colormap (default: None, uses data max)
+        levels: Number of contour levels or array of levels (default: None, matplotlib chooses)
+                If int, creates that many levels between vmin and vmax
+                If array, uses those specific level values
+        ax: matplotlib Axes object. If None, creates new figure (default: None)
+        figsize: Figure size tuple, only used if ax is None (default: (8, 6))
+        add_colorbar: If True, adds a colorbar (default: True)
+        contour_lines: If True, overlay contour lines on filled contours (default: False)
+        contour_kwargs: Dict of kwargs to pass to ax.contour() for lines (default: None)
+        **contourf_kwargs: Additional keyword arguments passed to ax.contourf()
+
+    Returns:
+        tuple: (fig, ax, contourf_object, colorbar_object)
+            - fig: matplotlib Figure object
+            - ax: matplotlib Axes object
+            - contourf_object: The ContourSet from contourf()
+            - colorbar_object: The Colorbar object (or None if add_colorbar=False)
+
+    Example:
+        >>> # Prepare your data
+        >>> x = data.select("s_width").unique(maintain_order=True).to_numpy().T[0]
+        >>> y = np.array([0, 2, 4, 8])
+        >>> X, Y = np.meshgrid(x, y)
+        >>> Z = data.pivot("s_width", index="processing", values="h_final").to_numpy()[:, 1:].astype(float)
+        >>>
+        >>> # Create the contour plot
+        >>> fig, ax, cf, cbar = plot_entropy_contour(
+        ...     X*1e9, Y, Z,
+        ...     vmin=0, vmax=1.0,
+        ...     levels=np.linspace(0, 1.0, 51)
+        ... )
+        >>>
+        >>> # Customize afterward
+        >>> cbar.set_label('Min-entropy / bit', rotation=270, labelpad=20)
+        >>> cbar.set_ticks(np.arange(0, 1.1, 0.1))
+        >>> ax.set_xlabel("Perturb pulse width (ns)")
+        >>> ax.set_ylabel("Number of XOR bits")
+        >>> ax.set_yticks([1, 2, 4, 8])
+        >>> plt.show()
+    """
+    # Create figure/axis if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    # Process levels parameter
+    if levels is not None and isinstance(levels, int):
+        # If levels is an integer, create that many levels between vmin and vmax
+        if vmin is None:
+            vmin = np.nanmin(Z)
+        if vmax is None:
+            vmax = np.nanmax(Z)
+        levels = np.linspace(vmin, vmax, levels)
+
+    # Create filled contour plot
+    cf = ax.contourf(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax, levels=levels, **contourf_kwargs)
+
+    # Add contour lines if requested
+    if contour_lines:
+        if contour_kwargs is None:
+            contour_kwargs = {'colors': 'k', 'linestyles': '--', 'linewidths': 0.5}
+        ax.contour(X, Y, Z, levels=levels if levels is not None else cf.levels, **contour_kwargs)
+
+    # Create colorbar if requested
+    cbar = None
+    if add_colorbar:
+        cbar = fig.colorbar(cf, ax=ax)
+
+    return fig, ax, cf, cbar
