@@ -180,7 +180,7 @@ class EntropyEvaluationPipeline:
                                 overlaps = [0]
                             else:
                                 overlaps = xor_overlaps.get(xor_n, [0])
-                            process_list = [(f"xor{xor_n}_o{overlap}", overlap) for overlap in overlaps]
+                            process_list = [(f"xor{xor_n:02d}_o{overlap}", overlap) for overlap in overlaps]
 
                         # Process each (xor_level, overlap) combination independently
                         for process_name, overlap in process_list:
