@@ -5,19 +5,22 @@ Migration script to rename xor processing folders and update references.
 PROBLEM:
     When you have folders named xor2, xor4, xor8 alongside xor12 and xor16,
     alphabetical sorting results in: xor12, xor16, xor2, xor4, xor8
+    Similarly, overlap naming like o1, o2, o3 sorts incorrectly with o10, o11, o12
     This makes data import and plotting difficult.
 
 SOLUTION:
-    Rename xor2->xor02, xor4->xor04, xor8->xor08 for proper sorting:
-    xor02, xor04, xor08, xor12, xor16
+    - Rename xor2->xor02, xor4->xor04, xor8->xor08 for proper sorting
+    - Rename overlap suffixes: _o1->_o01, _o2->_o02, _o3->_o03, etc.
+    Result: xor02_o01, xor04_o03, xor08_o07, xor12_o12, xor16_o15
 
 WHAT THIS SCRIPT DOES:
     1. Renames folders in bin/ and esv/ directories
        - Handles base names (e.g., xor2) and overlapping versions (e.g., xor2_o0, xor2_o1)
+       - Applies both xor number padding AND overlap number padding
 
-    2. Updates code references in Python files and Jupyter notebooks
+    2. Updates code references in Python files, Jupyter notebooks, and CSV files
        - Uses regex with word boundaries to avoid false matches (won't replace xor2 in xor24)
-       - Updates strings, variable names, and path references
+       - Updates strings, variable names, path references, and CSV values
 
     3. Safety features:
        - Dry-run mode to preview all changes before applying
@@ -156,6 +159,7 @@ def find_xor_folders(base_dir: Path, devices: List[str] = None) -> List[Path]:
 def rename_folder(old_path: Path, dry_run: bool = True) -> Tuple[Path, bool]:
     """
     Rename a single folder according to migration mapping.
+    Handles both xor number padding (xor2->xor02) and overlap padding (_o1->_o01).
 
     Args:
         old_path: Path to folder to rename
@@ -166,7 +170,7 @@ def rename_folder(old_path: Path, dry_run: bool = True) -> Tuple[Path, bool]:
     """
     old_name = old_path.name
 
-    # Determine new name
+    # Determine new name - apply xor number padding first
     new_name = old_name
     for old_prefix, new_prefix in XOR_MIGRATIONS.items():
         if old_name == old_prefix:
@@ -175,6 +179,14 @@ def rename_folder(old_path: Path, dry_run: bool = True) -> Tuple[Path, bool]:
         elif old_name.startswith(old_prefix + '_'):
             new_name = old_name.replace(old_prefix + '_', new_prefix + '_', 1)
             break
+
+    # Apply overlap number padding (_o1->_o01, _o2->_o02, etc.)
+    # Match _o followed by single digit (0-9)
+    overlap_pattern = re.compile(r'_o(\d)(?=$)')
+    match = overlap_pattern.search(new_name)
+    if match:
+        overlap_num = match.group(1)
+        new_name = overlap_pattern.sub(f'_o0{overlap_num}', new_name)
 
     new_path = old_path.parent / new_name
 
@@ -197,7 +209,8 @@ def rename_folder(old_path: Path, dry_run: bool = True) -> Tuple[Path, bool]:
 
 def update_file_content(file_path: Path, dry_run: bool = True) -> int:
     """
-    Update references in a file (Python or Jupyter notebook).
+    Update references in a file (Python, Jupyter notebook, or CSV).
+    Handles both xor number padding and overlap number padding.
 
     Args:
         file_path: Path to file to update
@@ -213,7 +226,7 @@ def update_file_content(file_path: Path, dry_run: bool = True) -> int:
         original_content = content
         total_replacements = 0
 
-        # Build regex patterns for each migration
+        # Step 1: Apply xor number padding (xor2->xor02, xor4->xor04, xor8->xor08)
         # We need to be careful to match whole words or patterns like "xor2_o0", "xor2", etc.
         # but not match things like "xor24"
         for old_name, new_name in XOR_MIGRATIONS.items():
@@ -229,6 +242,20 @@ def update_file_content(file_path: Path, dry_run: bool = True) -> int:
             if matches:
                 content = pattern.sub(new_name, content)
                 total_replacements += len(matches)
+
+        # Step 2: Apply overlap number padding (_o1->_o01, _o2->_o02, etc.)
+        # Match _o followed by single digit, but not double digit
+        # Use negative lookahead to avoid matching _o1 in _o10, _o11, etc.
+        overlap_pattern = re.compile(
+            r'_o(\d)(?!\d)',  # _o followed by single digit, not followed by another digit
+            re.MULTILINE
+        )
+
+        # Find all matches and replace
+        overlap_matches = overlap_pattern.findall(content)
+        if overlap_matches:
+            content = overlap_pattern.sub(r'_o0\1', content)
+            total_replacements += len(overlap_matches)
 
         if total_replacements > 0:
             if not dry_run:

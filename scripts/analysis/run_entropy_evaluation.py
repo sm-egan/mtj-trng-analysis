@@ -55,9 +55,9 @@ if __name__ == "__main__":
 
     pipeline.evaluate_entropy(
         device_id="011_08",
-        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
-        xor_levels=[12],
-        xor_overlaps={12 : [0]},
+        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7),
+        xor_levels=[12, 16],
+        xor_overlaps={12 : [2,4,8,10,11], 16 : [4,8,12,13,14,15]},
         tests=['non_iid', 'iid', 'restart'],
         skip_existing=True
     )

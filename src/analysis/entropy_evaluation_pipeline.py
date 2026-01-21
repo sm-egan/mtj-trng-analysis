@@ -180,7 +180,7 @@ class EntropyEvaluationPipeline:
                                 overlaps = [0]
                             else:
                                 overlaps = xor_overlaps.get(xor_n, [0])
-                            process_list = [(f"xor{xor_n:02d}_o{overlap}", overlap) for overlap in overlaps]
+                            process_list = [(f"xor{xor_n:02d}_o{overlap:02d}", overlap) for overlap in overlaps]
 
                         # Process each (xor_level, overlap) combination independently
                         for process_name, overlap in process_list:
@@ -1257,7 +1257,7 @@ class EntropyEvaluationPipeline:
 
         all_hashes = set()
 
-        # Get all process directories (raw, xor02_o0, xor04_o3, etc.)
+        # Get all process directories (raw, xor02_o00, xor04_o03, etc.)
         # Filter out non-directories and special directories like 'restart'
         process_dirs = [d for d in device_path.iterdir()
                        if d.is_dir() and d.name != 'restart']
