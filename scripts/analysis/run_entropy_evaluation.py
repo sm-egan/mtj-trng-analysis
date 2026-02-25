@@ -53,14 +53,33 @@ if __name__ == "__main__":
     #     skip_existing=True
     # )
 
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7),
+    #     xor_levels=[12, 16],
+    #     xor_overlaps={12 : [2,4,6], 16 : [2,6,10]},
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
     pipeline.evaluate_entropy(
         device_id="011_08",
-        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7),
-        xor_levels=[12, 16],
-        xor_overlaps={12 : [2,4,8,10,11], 16 : [4,8,12,13,14,15]},
+        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7) & (pl.col("s_width") == 4e-9),
+        xor_levels=[16],
+        xor_overlaps={16 : [4]},
         tests=['non_iid', 'iid', 'restart'],
-        skip_existing=True
+        skip_existing=False
     )
+
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7),
+    #     xor_levels=[6],
+    #     xor_overlaps={6 : [0,2,4,5]},
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
+
+
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",

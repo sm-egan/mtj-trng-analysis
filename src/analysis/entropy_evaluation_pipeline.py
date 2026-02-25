@@ -15,11 +15,11 @@ import sqlite3
 class EntropyEvaluationPipeline:
     """Pipeline for running NIST SP 800-90B entropy evaluation tests"""
     
-    def __init__(self, data_manager, ea_binaries_path, 
+    def __init__(self, data_manager, ea_binaries_path,
                  output_base_dir='bin', results_base_dir='esv'):
         """
         Initialize the pipeline
-        
+
         Args:
             data_manager: ParquetExperimentalDataManager instance
             ea_binaries_path: Path to directory containing ea_iid and ea_non_iid
@@ -30,21 +30,60 @@ class EntropyEvaluationPipeline:
         self.ea_path = Path(ea_binaries_path)
         self.ea_iid = self.ea_path / 'ea_iid'
         self.ea_non_iid = self.ea_path / 'ea_non_iid'
-        
+
         # Verify binaries exist
         if not self.ea_iid.exists():
             raise FileNotFoundError(f"ea_iid not found at {self.ea_iid}")
         if not self.ea_non_iid.exists():
             raise FileNotFoundError(f"ea_non_iid not found at {self.ea_non_iid}")
-            
+
         self.output_base = Path(output_base_dir)
         self.results_base = Path(results_base_dir)
-        
+
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
+
+    def _split_into_consecutive_groups(self, df):
+        """
+        Split a dataframe into sub-groups with consecutive row_numbers.
+        Uses vectorized Polars operations for efficiency.
+
+        Args:
+            df: Polars DataFrame sorted by row_number
+
+        Returns:
+            List of DataFrames, each containing consecutive row_numbers
+
+        Example:
+            Input: DataFrame with row_numbers [34, 35, 36, 37, 201]
+            Output: [DataFrame([34, 35, 36, 37]), DataFrame([201])]
+        """
+        if len(df) == 0:
+            return []
+
+        # Ensure sorted by row_number
+        df = df.sort("row_number")
+
+        # Create a group identifier: increment when there's a gap in row_numbers
+        # diff() computes row_number[i] - row_number[i-1]
+        # When diff > 1, we have a gap and should start a new group
+        df = df.with_columns([
+            (pl.col("row_number").diff().fill_null(1) > 1)
+            .cast(pl.Int32)
+            .cum_sum()
+            .alias("_consec_group")
+        ])
+
+        # Split into groups based on the consecutive group identifier
+        groups = []
+        for _, group_df in df.group_by("_consec_group", maintain_order=True):
+            # Drop the temporary column
+            groups.append(group_df.drop("_consec_group"))
+
+        return groups
     
 
     def evaluate_entropy(self,
@@ -130,13 +169,38 @@ class EntropyEvaluationPipeline:
 
                 for group_key, group_data in df_grouped:
                     group_desc = ", ".join([f"{col}={val}" for col, val in zip(group_by, group_key)])
-                    group_run_ids = group_data.sort("row_number")['run_id'].to_list()
-                    groups_to_process.append((group_desc, group_run_ids))
+
+                    # Further split by consecutive row numbers
+                    consecutive_groups = self._split_into_consecutive_groups(group_data)
+
+                    if len(consecutive_groups) > 1:
+                        self.logger.info(f"  Parameter group '{group_desc}' split into {len(consecutive_groups)} consecutive sequences")
+
+                    for consec_group in consecutive_groups:
+                        row_range = f"rows {consec_group['row_number'][0]}-{consec_group['row_number'][-1]}"
+                        full_desc = f"{group_desc}, {row_range}"
+                        group_run_ids = consec_group['run_id'].to_list()
+                        groups_to_process.append((full_desc, group_run_ids))
+                        self.logger.info(f"Found group with row range {row_range}")
             else:
-                # Single group - process normally
-                groups_to_process.append((None, run_ids))
+                # Single parameter group - still check for consecutive runs
+                consecutive_groups = self._split_into_consecutive_groups(df)
+                if len(consecutive_groups) > 1:
+                    self.logger.info(f"Split into {len(consecutive_groups)} consecutive sequences")
+                    for consec_group in consecutive_groups:
+                        row_range = f"rows {consec_group['row_number'][0]}-{consec_group['row_number'][-1]}"
+                        group_run_ids = consec_group['run_id'].to_list()
+                        groups_to_process.append((row_range, group_run_ids))
+                        self.logger.info(f"Found group with row range {row_range}")
+                else:
+                    # Single consecutive group - process normally
+                    row_nums = df['row_number'].to_list()
+                    row_range = f"rows {row_nums[0]}-{row_nums[-1]}"
+                    self.logger.info(f"Single consecutive group found with {row_range}")
+                    groups_to_process.append((None, run_ids))
         else:
             # No auto-grouping - single group
+            self.logger.info(f"No auto-grouping: processing all specified runs as a single group")
             groups_to_process.append((None, run_ids))
 
         # Process each group

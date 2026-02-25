@@ -118,6 +118,7 @@ class MigrationTracker:
 def find_xor_folders(base_dir: Path, devices: List[str] = None) -> List[Path]:
     """
     Find all xor folders that need renaming in bin/ and esv/ directories.
+    This includes folders needing xor number padding AND/OR overlap number padding.
 
     Args:
         base_dir: Base directory to search (bin or esv)
@@ -144,14 +145,27 @@ def find_xor_folders(base_dir: Path, devices: List[str] = None) -> List[Path]:
                 continue
 
             folder_name = folder.name
+            needs_rename = False
 
-            # Check if folder matches old naming pattern
+            # Check 1: Does it need xor number padding?
             # Match: xor2, xor4, xor8 (with optional _o suffix)
             # Don't match: xor02, xor04, xor08, xor12, xor16
             for old_name in XOR_MIGRATIONS.keys():
                 if folder_name == old_name or folder_name.startswith(old_name + '_'):
-                    folders_to_rename.append(folder)
+                    needs_rename = True
                     break
+
+            # Check 2: Does it need overlap number padding?
+            # Match folders like xor02_o1, xor04_o3, xor08_o7 (single digit after _o)
+            # Don't match xor02_o10, xor12_o12 (already double digit)
+            if not needs_rename and '_o' in folder_name:
+                # Check if it ends with _o followed by a single digit
+                overlap_pattern = re.compile(r'_o(\d)$')
+                if overlap_pattern.search(folder_name):
+                    needs_rename = True
+
+            if needs_rename:
+                folders_to_rename.append(folder)
 
     return sorted(folders_to_rename)
 
