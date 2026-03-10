@@ -94,6 +94,7 @@ class EntropyEvaluationPipeline:
                         xor_overlaps: Optional[dict] = None,
                         skip_existing: bool = True,
                         tests: List[str] = ['non_iid', 'iid'],
+                        restart_test_types: List[str] = ['iid', 'non_iid'],
                         auto_group: bool = True,
                         group_by: List[str] = ["s_amplitude", "s_width", "r_amplitude", "r_width", "field"]):
         """
@@ -108,6 +109,11 @@ class EntropyEvaluationPipeline:
             skip_existing: Skip if output files already exist
             tests: Which tests to run ('iid', 'non_iid', 'restart')
                 Note: 'restart' requires 'iid' to run first, and 'non_iid' if IID fails
+            restart_test_types: Which restart test variants to run when 'restart' is in tests.
+                Defaults to ['iid', 'non_iid'] so both IID and non-IID restart tests are always
+                saved. IID restart is only run when the full-bitstream IID test passed; non-IID
+                restart is run regardless of IID outcome. Pass ['non_iid'] to skip IID restart
+                tests entirely.
             auto_group: If True, automatically process each unique combination of group_by columns separately.
                 If False and multiple groups detected, raises an error.
             group_by: Columns to group by when detecting unique parameter combinations.
@@ -293,7 +299,8 @@ class EntropyEvaluationPipeline:
                         tasks = self.create_restart_test_plan(
                             device_id=device_id,
                             process_names=process_name,
-                            file_hash=file_hash
+                            file_hash=file_hash,
+                            restart_test_types=restart_test_types
                         )
                         if tasks:
                             self.run_restart_tests(tasks=tasks, skip_existing=skip_existing)
@@ -330,7 +337,8 @@ class EntropyEvaluationPipeline:
                     self.run_restart_tests(
                         device_id=device_id,
                         process_names=process_names_to_check,
-                        skip_existing=skip_existing
+                        skip_existing=skip_existing,
+                        restart_test_types=restart_test_types
                     )
 
         # Log completion message after all groups are processed
@@ -619,17 +627,22 @@ class EntropyEvaluationPipeline:
             self.logger.error(f"Error parsing {result_path}: {e}")
             return None, None
 
-    def create_restart_test_plan(self, device_id=None, process_names=None, file_hash=None):
+    def create_restart_test_plan(self, device_id=None, process_names=None, file_hash=None,
+                                 restart_test_types=None):
         """
         Create an execution plan for restart tests based on existing test results.
         You can either specify a specific device, process names, and/or file hash as lists of strings,
         or leave them as None to process all devices, processes, and files.
-        
+
         Args:
             device_id: Specific device (if None, all devices)
             process_names: Specific processes (if None, all processes)
             file_hash: Specific file hash (if None, all files)
-            
+            restart_test_types: Which restart variants to plan ('iid', 'non_iid').
+                Defaults to ['iid', 'non_iid']. IID restart is only planned when the
+                full-bitstream IID test passed; non-IID restart is planned regardless
+                of IID outcome (as long as non-IID results exist).
+
         Returns:
             list: List of restart test tasks, each containing:
                 {
@@ -638,35 +651,40 @@ class EntropyEvaluationPipeline:
                     'file_hash': str,
                     'bin_file': Path,
                     'restart_dir': Path,
+                    'restart_test_type': 'iid' or 'non_iid',
                     'test_flag': '-i' or '-n',
                     'h_original': float,
-                    'num_restart_files': int
+                    'num_restart_files': int,
+                    'source_test': 'iid' or 'non_iid'
                 }
         """
+        if restart_test_types is None:
+            restart_test_types = ['iid', 'non_iid']
+
         tasks = []
-        
+
         # Determine scope
         if device_id:
             device_dirs = [self.output_base / device_id]
         else:
             # Use presence of underscore to filter out "unstructured" directory
             device_dirs = [d for d in self.output_base.iterdir() if d.is_dir() and '_' in d.name]
-        
+
         for device_dir in device_dirs:
             current_device_id = device_dir.name
-            
+
             # Filter processes
             if process_names:
                 if isinstance(process_names, str):
                     process_names = [process_names]
                 process_dirs = [device_dir / p for p in process_names if (device_dir / p).exists()]
             else:
-                process_dirs = [d for d in device_dir.iterdir() 
+                process_dirs = [d for d in device_dir.iterdir()
                                if d.is_dir() and d.name != 'restart']
-            
+
             for process_dir in process_dirs:
                 current_process = process_dir.name
-                
+
                 # Filter files
                 if file_hash:
                     if isinstance(file_hash, str):
@@ -676,80 +694,76 @@ class EntropyEvaluationPipeline:
                     bin_files = [f for f in bin_files if f.exists()]
                 else:
                     bin_files = list(process_dir.glob('*.bin'))
-                
+
                 for bin_file in bin_files:
                     current_hash = bin_file.stem
-                    
+
                     # Check restart directory
                     restart_dir = process_dir / 'restart' / current_hash
                     if not restart_dir.exists() or not any(restart_dir.glob('*.bin')):
                         self.logger.warning(f"No restart files found for {current_device_id}/{current_process}/{current_hash[:12]}...")
                         continue
-                    
+
                     # Count restart files
                     restart_files = list(restart_dir.glob('*.bin'))
                     num_restart_files = len(restart_files)
-                    
-                    # Parse IID results
+
+                    # Resolve paths to full-bitstream test results (parsed lazily below)
                     iid_path = self.results_base / current_device_id / current_process / 'iid' / f"{current_hash}.txt"
-                    iid_h, iid_failed = self.parse_test_result_file(iid_path)
-
-                    if iid_h is None:
-                        self.logger.warning(f"No IID results for {current_device_id}/{current_process}/{current_hash[:12]}...")
-                        continue
-
-                    # Check if non-IID results exist (needed as fallback if restart files fail IID)
                     non_iid_path = self.results_base / current_device_id / current_process / 'non_iid' / f"{current_hash}.txt"
-                    non_iid_h, _ = self.parse_test_result_file(non_iid_path)
 
-                    # Determine test type based on IID results
-                    if not iid_failed:
-                        # IID passed - use IID restart
-                        if non_iid_h is None:
-                            self.logger.warning(
-                                f"Planning IID restart tests for {current_device_id}/{current_process}/{current_hash[:12]}, "
-                                f"but no non-IID results available. If individual restart files fail IID, "
-                                f"they cannot be re-run as non-IID. Consider running non-IID tests first."
-                            )
+                    # Create one task per requested restart test type, subject to eligibility
+                    for restart_type in restart_test_types:
+                        if restart_type == 'iid':
+                            h_val, iid_failed = self.parse_test_result_file(iid_path)
+                            if h_val is None:
+                                self.logger.warning(
+                                    f"No IID results for {current_device_id}/{current_process}/{current_hash[:12]}. "
+                                    f"Skipping IID restart test."
+                                )
+                                continue
+                            if iid_failed:
+                                self.logger.info(
+                                    f"Full-bitstream IID failed for {current_device_id}/{current_process}/{current_hash[:12]}. "
+                                    f"Skipping IID restart test."
+                                )
+                                continue
+                            test_flag = '-i'
+                            source_test = 'iid'
 
-                        task = {
-                            'device_id': current_device_id,
-                            'process_name': current_process,
-                            'file_hash': current_hash,
-                            'bin_file': bin_file,
-                            'restart_dir': restart_dir,
-                            'test_flag': '-i',
-                            'h_original': iid_h,
-                            'num_restart_files': num_restart_files,
-                            'source_test': 'iid'
-                        }
-                        tasks.append(task)
-                    else:
-                        # IID failed - use non-IID restart
-                        non_iid_path = self.results_base / current_device_id / current_process / 'non_iid' / f"{current_hash}.txt"
-                        non_iid_h, _ = self.parse_test_result_file(non_iid_path)
-                        
-                        if non_iid_h is None:
-                            self.logger.warning(f"IID failed but no non-IID results for {current_device_id}/{current_process}/{current_hash[:12]}...")
+                        elif restart_type == 'non_iid':
+                            h_val, _ = self.parse_test_result_file(non_iid_path)
+                            if h_val is None:
+                                self.logger.warning(
+                                    f"No non-IID results for {current_device_id}/{current_process}/{current_hash[:12]}. "
+                                    f"Skipping non-IID restart test."
+                                )
+                                continue
+                            test_flag = '-n'
+                            source_test = 'non_iid'
+
+                        else:
+                            self.logger.warning(f"Unknown restart test type '{restart_type}'. Skipping.")
                             continue
-                        
+
                         task = {
                             'device_id': current_device_id,
                             'process_name': current_process,
                             'file_hash': current_hash,
                             'bin_file': bin_file,
                             'restart_dir': restart_dir,
-                            'test_flag': '-n',
-                            'h_original': non_iid_h,
+                            'restart_test_type': restart_type,
+                            'test_flag': test_flag,
+                            'h_original': h_val,
                             'num_restart_files': num_restart_files,
-                            'source_test': 'non_iid'
+                            'source_test': source_test
                         }
                         tasks.append(task)
-        
+
         return tasks
 
     def run_restart_tests(self, tasks=None, device_id=None, process_names=None,
-                        file_hash=None, skip_existing=True):
+                        file_hash=None, skip_existing=True, restart_test_types=None):
         """
         Run restart tests based on a task list or criteria.
 
@@ -760,6 +774,9 @@ class EntropyEvaluationPipeline:
             process_names: Specific processes (used if tasks is None)
             file_hash: Specific file hash (used if tasks is None)
             skip_existing: Skip if restart test results already exist
+            restart_test_types: Which restart variants to run ('iid', 'non_iid').
+                Passed to create_restart_test_plan when tasks is None.
+                Defaults to ['iid', 'non_iid'].
 
         Returns:
             dict: Summary of test results
@@ -767,7 +784,8 @@ class EntropyEvaluationPipeline:
         # If no tasks provided, create them
         if tasks is None:
             self.logger.info("Creating restart test plan...")
-            tasks = self.create_restart_test_plan(device_id, process_names, file_hash)
+            tasks = self.create_restart_test_plan(device_id, process_names, file_hash,
+                                                  restart_test_types=restart_test_types)
 
         if not tasks:
             self.logger.warning("No restart tests to run")
@@ -785,7 +803,6 @@ class EntropyEvaluationPipeline:
             'completed': 0,
             'skipped': 0,
             'failed': 0,
-            'rerun_as_non_iid': 0,
             'results': []
         }
 
@@ -800,22 +817,23 @@ class EntropyEvaluationPipeline:
             task_results = {
                 'task': task,
                 'restart_results': [],
-                'rerun_files': []
             }
 
-            failed_iid_files = []
+            restart_type = task['restart_test_type']
+            self.logger.info(f"  Restart test type: {restart_type}")
 
             for i in range(task['num_restart_files']):
                 restart_file = task['restart_dir'] / f"{i}.bin"
 
-                # Determine output path
-                results_dir = self.results_base / task['device_id'] / task['process_name'] / 'restart' / task['file_hash']
+                # Determine output path — type-specific subdirectory
+                results_dir = (self.results_base / task['device_id'] / task['process_name']
+                               / 'restart' / restart_type / task['file_hash'])
                 results_dir.mkdir(parents=True, exist_ok=True)
                 results_file = results_dir / f"{i}.txt"
 
                 # Check if should skip
                 if results_file.exists() and skip_existing:
-                    self.logger.info(f"  Skipping restart file {i} - results already exist")
+                    self.logger.info(f"  Skipping restart file {i} ({restart_type}) - results already exist")
                     summary['skipped'] += 1
                     continue
 
@@ -828,44 +846,10 @@ class EntropyEvaluationPipeline:
                 if result['success']:
                     summary['completed'] += 1
                     task_results['restart_results'].append(result)
-                    self.logger.info(f"  Restart file {i}: H_min = {result.get('h_final', 'N/A')}")
-
-                    # Check if IID test failed
-                    if task['test_flag'] == '-i' and not result.get('validation_passed', True):
-                        failed_iid_files.append(i)
+                    self.logger.info(f"  Restart file {i} ({restart_type}): H_min = {result.get('h_final', 'N/A')}")
                 else:
                     summary['failed'] += 1
-                    self.logger.error(f"  Restart file {i}: Error running restart test")
-
-            # Re-run failed IID restart tests as non-IID
-            if failed_iid_files and task['test_flag'] == '-i':
-                self.logger.warning(f"\n{len(failed_iid_files)} restart file(s) failed IID testing. Re-running as non-IID...")
-
-                # Get non-IID H_original
-                non_iid_path = self.results_base / task['device_id'] / task['process_name'] / 'non_iid' / f"{task['file_hash']}.txt"
-                non_iid_h, _ = self.parse_test_result_file(non_iid_path)
-
-                if non_iid_h is None:
-                    self.logger.error(f"No non-IID results found for {task['device_id']}/{task['process_name']}/{task['file_hash'][:12]}. Cannot re-run as non-IID.")
-                else:
-                    for file_num in failed_iid_files:
-                        restart_file = task['restart_dir'] / f"{file_num}.bin"
-                        results_file = results_dir / f"{file_num}.txt"
-
-                        self.logger.info(f"  Re-running restart file {file_num} with non-IID test...")
-
-                        # Run non-IID restart test
-                        result = self._run_single_restart_test(
-                            ea_restart, restart_file, '-n',
-                            non_iid_h, results_file, metadata_str
-                        )
-
-                        if result['success']:
-                            summary['rerun_as_non_iid'] += 1
-                            task_results['rerun_files'].append(file_num)
-                            self.logger.info(f"  Restart file {file_num} (non-IID): H_min = {result.get('h_final', 'N/A')}")
-                        else:
-                            self.logger.error(f"  Restart file {file_num} (non-IID): Error running restart test")
+                    self.logger.error(f"  Restart file {i} ({restart_type}): Error running restart test")
 
             summary['results'].append(task_results)
 
@@ -875,8 +859,6 @@ class EntropyEvaluationPipeline:
         self.logger.info(f"  Completed tests: {summary['completed']}")
         self.logger.info(f"  Skipped tests: {summary['skipped']}")
         self.logger.info(f"  Failed tests: {summary['failed']}")
-        if summary['rerun_as_non_iid'] > 0:
-            self.logger.info(f"  Re-run as non-IID: {summary['rerun_as_non_iid']}")
 
         return summary
     
@@ -1158,7 +1140,7 @@ class EntropyEvaluationPipeline:
             return "Error extracting metadata"    
     
     def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None,
-                                include_binary_stats=True, correlation_lags=None):
+                                include_binary_stats=True, correlation_lags=None, corr_sequence_max_len=None):
         """
         Collect entropy test results from all test files and compile into a CSV.
         
@@ -1168,6 +1150,7 @@ class EntropyEvaluationPipeline:
             output_csv: Path to output CSV file (if None, returns DataFrame)
             include_binary_stats: Whether to include binary file statistics (default: True)
             correlation_lags: List of correlation lags to compute (default: [1, 2, 4, ..., 1024])
+            corr_sequence_max_len: int number of terms in auto-correlation sum from sample 1 to N-k = corr_sequence_max_len
 
         Returns:
             pd.DataFrame: DataFrame with entropy results
@@ -1220,62 +1203,90 @@ class EntropyEvaluationPipeline:
                         'r_width': None,
                         'field': None,
                         'iid_pass': None,
-                        'restart_type':None,
-                        'restart_pass': None,
+                        'iid_restart_pass': None,
+                        'non_iid_restart_pass': None,
                         'h_original_iid': None,
                         'h_original_non_iid': None,
-                        'h_final': None
+                        'h_iid_restart': None,
+                        'h_non_iid_restart': None,
+                        'h_final_iid': None,
+                        'h_final_non_iid': None,
+                        'h_final': None,
                     }
 
                     # Track if we found any test results for this process/hash combination
                     found_results = False
 
                     get_metadata = True
-                    for test_type in ['iid', 'non_iid', 'restart']:
+                    # Parse full-bitstream IID and non-IID results
+                    for test_type in ['iid', 'non_iid']:
                         test_dir = process_dir / test_type
                         if not test_dir.exists():
                             self.logger.warning(f"Test type {test_type} directory does not exist for {test_dir}. Skipping...")
                             continue
 
-                        # Parse IID and non-IID results
-                        if test_type in ['iid', 'non_iid']:
-                            test_file = test_dir / f"{file_hash}.txt"
+                        test_file = test_dir / f"{file_hash}.txt"
+                        if not test_file.exists():
+                            self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
+                            continue
 
-                            if not test_file.exists():
-                                self.logger.warning(f"Missing {test_type} results for {current_device}/{current_process}/{file_hash}...")
-                                continue
+                        # Mark that we found at least one result file
+                        found_results = True
 
-                            # Mark that we found at least one result file
+                        # Only get metadata if it's the first time parsing this file
+                        parsed_result, metadata_found = self._parse_iid_non_iid_result_file(test_file, test_type=test_type, find_metadata=get_metadata)
+                        # if _parse_iid_non_iid_result_file returned metadata_found, we can skip it next time
+                        get_metadata = not metadata_found
+
+                        if parsed_result:
+                            result.update(parsed_result)
+                            self.logger.info(f"{test_type.capitalize()} results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+
+                    # Parse restart results — check new type-specific dirs, fall back to legacy layout
+                    legacy_restart_dir = process_dir / 'restart' / file_hash
+                    legacy_read = False  # Track whether legacy dir has been consumed
+
+                    for restart_type in ['iid', 'non_iid']:
+                        typed_restart_dir = process_dir / 'restart' / restart_type / file_hash
+
+                        if typed_restart_dir.exists():
                             found_results = True
-
-                            # Only get metadata if it's the first time parsing this file
-                            parsed_result, metadata_found = self._parse_iid_non_iid_result_file(test_file, test_type=test_type, find_metadata=get_metadata)
-                            # if _parse_iid_non_iid_result_file returned metadata_found, we can skip it next time
-                            get_metadata = not metadata_found
-
+                            parsed_result = self._parse_restart_results(typed_restart_dir)
+                            self.logger.debug(f"Parsed {restart_type} restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                             if parsed_result:
-                                result.update(parsed_result)
-                                self.logger.info(f"{test_type.capitalize()} results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+                                result[f'{restart_type}_restart_pass'] = parsed_result.get('restart_pass')
+                                result[f'h_{restart_type}_restart'] = parsed_result.get('h_final')
+                                self.logger.info(f"{restart_type} restart results for {current_device}/{current_process}/{file_hash}: pass={parsed_result.get('restart_pass')}, h={parsed_result.get('h_final')}")
 
-                        elif test_type == 'restart':
-                            restart_dir = test_dir / file_hash
-                            if not restart_dir.exists():
-                                self.logger.warning(f"Missing restart results for {current_device}/{current_process}/{file_hash}...")
-                                continue
-
-                            # Mark that we found at least one result directory
+                        elif not legacy_read and legacy_restart_dir.exists():
+                            # Read legacy restart/<hash>/ once; infer type from file content
+                            legacy_read = True
                             found_results = True
-
-                            parsed_result = self._parse_restart_results(test_dir / file_hash)
-                            self.logger.debug(f"Parsed restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+                            parsed_result = self._parse_restart_results(legacy_restart_dir)
+                            self.logger.debug(f"Parsed legacy restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
                             if parsed_result:
-                                result.update(parsed_result)
-                                self.logger.info(f"Restart results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+                                inferred_type = parsed_result.get('restart_type', 'iid')
+                                result[f'{inferred_type}_restart_pass'] = parsed_result.get('restart_pass')
+                                result[f'h_{inferred_type}_restart'] = parsed_result.get('h_final')
+                                self.logger.info(f"Legacy restart ({inferred_type}) results for {current_device}/{current_process}/{file_hash}: pass={parsed_result.get('restart_pass')}, h={parsed_result.get('h_final')}")
 
                     # Only add this row if we found at least one test result file
                     if not found_results:
                         self.logger.debug(f"No test results found for {current_device}/{current_process}/{file_hash}. Skipping row.")
                         continue
+
+                    # Compute final entropy estimates per NIST SP 800-90B: min(H_original, H_restart)
+                    if result['h_original_iid'] is not None and result['h_iid_restart'] is not None:
+                        result['h_final_iid'] = min(result['h_original_iid'], result['h_iid_restart'])
+                    if result['h_original_non_iid'] is not None and result['h_non_iid_restart'] is not None:
+                        result['h_final_non_iid'] = min(result['h_original_non_iid'], result['h_non_iid_restart'])
+
+                    # h_final: IID estimate when all IID tests passed, otherwise non-IID estimate
+                    all_iid_passed = result.get('iid_pass') and result.get('iid_restart_pass')
+                    if all_iid_passed and result['h_final_iid'] is not None:
+                        result['h_final'] = result['h_final_iid']
+                    elif result['h_final_non_iid'] is not None:
+                        result['h_final'] = result['h_final_non_iid']
 
                     # Add binary statistics to the result
                     if include_binary_stats:
@@ -1291,9 +1302,12 @@ class EntropyEvaluationPipeline:
         # Reorder columns to match the expected format
         column_order = [
             'device', 'processing', 'raw_hash',
-            'switching_probability', 's_amplitude', 's_width', 
-            'r_amplitude', 'r_width', 'field', 'iid_pass', 'restart_type', 'restart_pass', 
-            'h_original_iid', 'h_original_non_iid', 'h_final'
+            'switching_probability', 's_amplitude', 's_width',
+            'r_amplitude', 'r_width', 'field',
+            'iid_pass', 'iid_restart_pass', 'non_iid_restart_pass',
+            'h_original_iid', 'h_original_non_iid',
+            'h_iid_restart', 'h_non_iid_restart',
+            'h_final_iid', 'h_final_non_iid', 'h_final'
         ]
 
         # Add binary statistics columns if requested
@@ -1487,7 +1501,7 @@ class EntropyEvaluationPipeline:
             return None
 
     def _get_binary_statistics(self, device_id, process_name, file_hash, 
-                            correlation_lags=None):
+                            correlation_lags=None, corr_sequence_max_len=None):
         """
         Compute statistics for a binary file.
         
@@ -1496,7 +1510,8 @@ class EntropyEvaluationPipeline:
             process_name: Process name (e.g., 'raw', 'xor02')
             file_hash: File hash
             correlation_lags: List of lags for autocorrelation (default: powers of 2 up to 2^20)
-            
+            corr_sequence_max_len: int max number of terms in auto-correlation sum from 1 to N-k = corr_sequence_max_len
+
         Returns:
             dict: Flat statistics dictionary with keys: mean, variance, corr_lag_1, corr_lag_2, etc.
                 Returns dict with None values if file is missing or empty.
@@ -1526,7 +1541,7 @@ class EntropyEvaluationPipeline:
                 return stats_result
             
             # Delegate to stats module
-            stats = compute_binary_statistics(data, correlation_lags=correlation_lags)
+            stats = compute_binary_statistics(data, correlation_lags=correlation_lags, corr_sequence_max_len=corr_sequence_max_len)
             
             # Log summary
             self.logger.info(f"Binary statistics for {bin_file.name}:")

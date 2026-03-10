@@ -6,6 +6,7 @@ Extract entropy test results to CSV format.
 import sys
 import json
 import argparse
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 
@@ -35,8 +36,27 @@ def main():
     parser.add_argument("--device", help="Specific device ID (e.g., '07_08')")
     parser.add_argument("--processes", nargs="+", help="Specific processes (e.g., raw xor02)")
     parser.add_argument("--filename", help="Output CSV filename (default: entropy_results_YYYYMMDD.csv)")
-    
+
+    lags_group = parser.add_mutually_exclusive_group()
+    lags_group.add_argument("--lags", nargs="+", type=int,
+                            help="Explicit correlation lags (e.g., --lags 1 2 4 8 16)")
+    lags_group.add_argument("--lags-expr", dest="lags_expr",
+                            help="NumPy expression for lags, evaluated with np available "
+                                 "(e.g., --lags-expr \"np.arange(0, 21)\" or "
+                                 "\"(2**np.arange(0,21)).tolist()\")")
+
     args = parser.parse_args()
+
+    # Resolve correlation lags
+    correlation_lags = None
+    if args.lags:
+        correlation_lags = args.lags
+    elif args.lags_expr:
+        try:
+            result = eval(args.lags_expr, {"np": np, "__builtins__": {}})
+            correlation_lags = [int(x) for x in np.asarray(result).ravel()]
+        except Exception as e:
+            parser.error(f"Could not evaluate --lags-expr: {e}")
     
     # Load config
     config = load_config()
@@ -61,13 +81,15 @@ def main():
     print(f"Extracting entropy results...")
     print(f"Device: {args.device if args.device else 'All devices'}")
     print(f"Processes: {args.processes if args.processes else 'All processes'}")
+    print(f"Correlation lags: {correlation_lags if correlation_lags else 'Default (powers of 2, 2^0 to 2^20)'}")
     print(f"Output file: {output_file}")
-    
+
     # Collect results
     df = pipeline.collect_entropy_results(
         device_id=args.device,
         process_names=args.processes,
-        output_csv=output_file
+        output_csv=output_file,
+        correlation_lags=correlation_lags
     )
     
     print(f"\nExtracted {len(df)} results to {output_file}")

@@ -46,12 +46,23 @@ if __name__ == "__main__":
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",
+    #     # 51 to 475 includes 3 different reset pulse amplitudes: -0.6,-0.7,-0.8
     #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
-    #     xor_levels=[1,2,4,8],
-    #     xor_overlaps={2 : [0,1], 4:[0,1,2,3], 8:[0,1,2,3,4,5,6,7]},
+    #     xor_levels=[1,2,4,8, 12, 16],
+    #     xor_overlaps={2 : [0,1], 4:[0,1,2,3], 8:[0,2,4,5,6,7], 12:[0,2,4,6,8,10,11], 16:[0,2,4,6,8,10,12,13,14,15]},
     #     tests=['non_iid', 'iid', 'restart'],
     #     skip_existing=True
     # )
+
+    pipeline.evaluate_entropy(
+        device_id="011_08",
+        # 51 to 475 includes 3 different reset pulse amplitudes: -0.6,-0.7,-0.8
+        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
+        xor_levels=[8],
+        xor_overlaps={8:[0,1,2,3,4]},
+        tests=['non_iid', 'iid', 'restart'],
+        skip_existing=True
+    )
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",
@@ -61,14 +72,14 @@ if __name__ == "__main__":
     #     tests=['non_iid', 'iid', 'restart'],
     #     skip_existing=True
     # )
-    pipeline.evaluate_entropy(
-        device_id="011_08",
-        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7) & (pl.col("s_width") == 4e-9),
-        xor_levels=[16],
-        xor_overlaps={16 : [4]},
-        tests=['non_iid', 'iid', 'restart'],
-        skip_existing=False
-    )
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000) & (pl.col("r_amplitude") == -0.7) & (pl.col("s_width") == 4e-9),
+    #     xor_levels=[16],
+    #     xor_overlaps={16 : [4]},
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=False
+    # )
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",
