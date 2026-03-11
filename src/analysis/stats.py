@@ -1,7 +1,9 @@
 import numpy as np
 import polars as pl
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+from scipy.stats import t as t_dist
 
 __all__ = [
     "get_bernoulli_trials_statistics",
@@ -13,6 +15,10 @@ __all__ = [
     "load_binary_sequence",
     "acf_df_from_entropy_results",
     "acf_df_from_binary",
+    "BetaBinomialFit",
+    "fit_beta_binomial",
+    "fit_beta_binomial_from_stats",
+    "fit_beta_binomial_all_xor",
 ]
 
 def get_bernoulli_trials_statistics(binary_data, Ns=None):
@@ -324,3 +330,278 @@ def acf_df_from_binary(
         "lag": list(corr.keys()),
         "acf": list(corr.values()),
     }).with_columns(pl.col("lag").cast(pl.Int64)).sort("lag")
+
+
+# ---------------------------------------------------------------------------
+# Beta-Binomial fitting
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BetaBinomialFit:
+    """
+    Results of a Beta-Binomial fit to block-sum variance data.
+
+    Model
+    -----
+    Var(S_n) = n · p · (1-p) · (1 + (n-1) · ρ)
+
+    Fit
+    ---
+    With p fixed to the empirical bit mean, q = p·(1-p) is known and the
+    model reduces to a 1-parameter WLS fit through the origin::
+
+        [Var(S_n)/n  −  q]  =  ρ · q · (n − 1)
+
+    p is not estimated from the variance because q = p(1-p) is flat near its
+    maximum at p = 0.5, so dp/dq diverges and any small error in q produces
+    a large, unreliable error in p.
+
+    Uncertainty
+    -----------
+    Weights w_i = (k_i − 1) / (2 · (Var(S_n_i)/n_i)²) from variance
+    propagation: Var(Var(S_n)/n) = 2·(Var(S_n)/n)² / (k−1).
+
+    Two SE estimates are stored:
+
+    * ``rho_se``           – independence lower bound (σ² = 1).
+    * ``rho_se_corrected`` – inflated by 1/√wmse to account for correlations
+      between R(n) values at different n (same underlying bitstream).
+
+    The 95 % CI uses the corrected SE.  wmse < 1 confirms correlated
+    observations; the corrected SE is a conservative practical upper bound.
+
+    Attributes
+    ----------
+    rho, p, q : float
+        Fitted ICC, fixed mean probability, and Bernoulli variance q = p(1-p).
+    rho_se : float
+        SE under the independence assumption (lower bound).
+    rho_se_corrected : float
+        SE corrected for inter-observation correlations (upper bound).
+    rho_lo, rho_hi : float
+        95 % CI using ``rho_se_corrected``.
+    wmse : float
+        Weighted MSE of residuals.  Expected ≈ 1 for independent observations;
+        wmse < 1 indicates correlated R(n) values.
+    dof : int
+        Degrees of freedom (n_points − 1).
+    Ns, vars_Sn, n_blocks : np.ndarray
+        Block sizes, sample variances, and block counts used in the fit
+        (after applying the n_min mask).
+    n_min : int
+        Minimum block size included in the fit.
+    """
+    rho:               float
+    p:                 float
+    q:                 float
+    rho_se:            float
+    rho_se_corrected:  float
+    rho_lo:            float
+    rho_hi:            float
+    wmse:              float
+    dof:               int
+    Ns:                np.ndarray
+    vars_Sn:           np.ndarray
+    n_blocks:          np.ndarray
+    n_min:             int = 0
+
+    @property
+    def alpha_bb(self) -> float:
+        """Beta-binomial α = p·(1/ρ − 1).  NaN if ρ ≤ 0."""
+        return self.p * (1.0 / self.rho - 1.0) if self.rho > 0 else float("nan")
+
+    @property
+    def beta_bb(self) -> float:
+        """Beta-binomial β = (1-p)·(1/ρ − 1).  NaN if ρ ≤ 0."""
+        return (1.0 - self.p) * (1.0 / self.rho - 1.0) if self.rho > 0 else float("nan")
+
+    @property
+    def var_ratio(self) -> np.ndarray:
+        """Observed Var(S_n)/(n·q) — the variance ratio relative to binomial(n, p)."""
+        return self.vars_Sn / (self.Ns * self.q)
+
+    @property
+    def fitted_var_per_n(self) -> np.ndarray:
+        """Fitted Var(S_n)/n = q·(1 + (n−1)·ρ) at each fitted block size."""
+        return self.q * (1.0 + (self.Ns - 1.0) * self.rho)
+
+    def __repr__(self) -> str:
+        return (
+            f"BetaBinomialFit(ρ={self.rho:.4e} ± {self.rho_se_corrected:.1e} [corrected], "
+            f"p={self.p:.5f}, wmse={self.wmse:.3f}, n_min={self.n_min})"
+        )
+
+
+def fit_beta_binomial(
+    Ns: np.ndarray,
+    vars_Sn: np.ndarray,
+    n_blocks: np.ndarray,
+    p: float,
+    n_min: int = 0,
+    confidence: float = 0.95,
+) -> BetaBinomialFit:
+    """
+    Fit a Beta-Binomial model to block-sum variance data.
+
+    Parameters
+    ----------
+    Ns : array-like
+        Block sizes used to compute ``vars_Sn``.
+    vars_Sn : array-like
+        Sample variances Var(S_n) at each block size, as returned by
+        ``get_bernoulli_trials_statistics``.
+    n_blocks : array-like
+        Number of non-overlapping blocks at each block size (k = L / n).
+    p : float
+        Empirical mean bit probability: ``float(np.mean(binary_data))``.
+        Do not substitute 0.5 unless the data is known to be perfectly balanced.
+    n_min : int, optional
+        Exclude block sizes below this value.  Useful when short-range
+        negative correlations cause Var(S_n)/n to dip below q at small n,
+        violating the linear beta-binomial assumption.  Default: 0 (use all).
+    confidence : float, optional
+        Confidence level for the returned CI.  Default: 0.95.
+
+    Returns
+    -------
+    BetaBinomialFit
+    """
+    Ns       = np.asarray(Ns,       dtype=float)
+    vars_Sn  = np.asarray(vars_Sn,  dtype=float)
+    n_blocks = np.asarray(n_blocks, dtype=float)
+
+    mask = Ns >= n_min
+    Ns_f, y_f, k_f = Ns[mask], vars_Sn[mask] / Ns[mask], n_blocks[mask]
+
+    q = p * (1.0 - p)
+
+    # 1-parameter WLS through origin:  (y − q) = ρ · q·(n−1)
+    x  = q * (Ns_f - 1.0)
+    dy = y_f - q
+    w  = (k_f - 1.0) / (2.0 * y_f ** 2)
+
+    rho_fit   = np.sum(w * x * dy) / np.sum(w * x ** 2)
+    residuals = dy - rho_fit * x
+    dof       = max(len(Ns_f) - 1, 1)
+    wmse      = np.sum(w * residuals ** 2) / dof
+
+    rho_se      = 1.0 / np.sqrt(np.sum(w * x ** 2))
+    rho_se_corr = rho_se / np.sqrt(max(wmse, 1e-10))
+    t_crit      = t_dist.ppf((1.0 + confidence) / 2.0, df=dof)
+
+    return BetaBinomialFit(
+        rho              = float(rho_fit),
+        p                = float(p),
+        q                = float(q),
+        rho_se           = float(rho_se),
+        rho_se_corrected = float(rho_se_corr),
+        rho_lo           = float(rho_fit - t_crit * rho_se_corr),
+        rho_hi           = float(rho_fit + t_crit * rho_se_corr),
+        wmse             = float(wmse),
+        dof              = dof,
+        Ns               = Ns_f,
+        vars_Sn          = vars_Sn[mask],
+        n_blocks         = k_f,
+        n_min            = n_min,
+    )
+
+
+def fit_beta_binomial_from_stats(
+    stats_entry: dict,
+    p: float,
+    n_min: int = 0,
+    confidence: float = 0.95,
+) -> BetaBinomialFit:
+    """
+    Convenience wrapper for a single entry from the ``stats`` dict returned by
+    :func:`~analysis.visualization.plot_Sn_variance`.
+
+    Parameters
+    ----------
+    stats_entry : dict
+        One value from the stats dict, e.g. ``stats['raw']``.
+        Must contain keys ``'Ns'``, ``'vars'``, and ``'n_blocks'``.
+    p : float
+        Empirical mean bit probability.
+    n_min : int, optional
+        Minimum block size to include.  Default: 0.
+    confidence : float, optional
+        Confidence level for CI.  Default: 0.95.
+
+    Returns
+    -------
+    BetaBinomialFit
+    """
+    return fit_beta_binomial(
+        Ns        = stats_entry["Ns"],
+        vars_Sn   = stats_entry["vars"],
+        n_blocks  = stats_entry["n_blocks"],
+        p         = p,
+        n_min     = n_min,
+        confidence = confidence,
+    )
+
+
+def fit_beta_binomial_all_xor(
+    binary_data: np.ndarray,
+    xor_levels: List[int] = (2, 4, 8),
+    Ns: Optional[np.ndarray] = None,
+    n_min: int = 0,
+    confidence: float = 0.95,
+) -> Dict[str, BetaBinomialFit]:
+    """
+    Fit the Beta-Binomial model to raw binary data and each XOR-whitened
+    version, returning a dict keyed by processing name.
+
+    This is the primary entry point for multi-processing analysis.  The
+    returned dict can be passed directly to the visualization functions
+    :func:`~analysis.visualization.plot_beta_binomial_var` and
+    :func:`~analysis.visualization.plot_icc_results`.
+
+    Parameters
+    ----------
+    binary_data : np.ndarray
+        Raw binary sequence (uint8, values 0 and 1).
+    xor_levels : list of int, optional
+        XOR whitening levels to include.  Default: (2, 4, 8).
+    Ns : np.ndarray, optional
+        Block sizes to use.  If None, chosen automatically by
+        ``get_bernoulli_trials_statistics``.
+    n_min : int, optional
+        Minimum block size included in each fit.  Default: 0.
+    confidence : float, optional
+        Confidence level for CIs.  Default: 0.95.
+
+    Returns
+    -------
+    dict[str, BetaBinomialFit]
+        Keys: ``'raw'``, ``'xor02'``, ``'xor04'``, …
+
+    Examples
+    --------
+    >>> fits = fit_beta_binomial_all_xor(data, xor_levels=[2, 4, 8], n_min=500)
+    >>> for key, fit in fits.items():
+    ...     print(key, fit)
+    """
+    from .processing import xorn_whitening
+
+    results: Dict[str, BetaBinomialFit] = {}
+
+    datasets = {"raw": binary_data}
+    for n in xor_levels:
+        datasets[f"xor{n:02d}"] = xorn_whitening(binary_data, n=n)
+
+    for key, data in datasets.items():
+        p_emp = float(np.mean(data))
+        Ns_k, _, vars_k, _, _ = get_bernoulli_trials_statistics(data, Ns=Ns)
+        n_blocks_k = len(data) // Ns_k
+        results[key] = fit_beta_binomial(
+            Ns        = Ns_k,
+            vars_Sn   = vars_k,
+            n_blocks  = n_blocks_k,
+            p         = p_emp,
+            n_min     = n_min,
+            confidence = confidence,
+        )
+
+    return results

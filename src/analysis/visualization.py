@@ -14,6 +14,8 @@ __all__ = [
     'plot_emphasis_circles',
     'plot_Sn_variance',
     'plot_entropy_vs_sp',
+    'plot_beta_binomial_var',
+    'plot_icc_results',
     'figsize_from_width_cm',
     'ENTROPY_CYCLER',
 ]
@@ -769,6 +771,38 @@ def plot_Sn_variance(
         ax.set_ylabel(r'$\mathrm{Var}(S_n)$', fontsize=fontsize)
         if ylim is not None:
             ax.set_ylim(ylim)
+    elif normalize == 'n':
+        for i, (key, label) in enumerate(zip(all_keys, all_labels)):
+            s = stats_dict[key]
+            color = all_colors[i % len(all_colors)]
+            marker = all_markers[i % len(all_markers)]
+
+            # Scale CI bounds from ratio space back to variance units
+            bvar = s['vars'] / s['normalized_vars']
+
+            ax.plot(
+                s['Ns'], s['vars'] / s['Ns'],  # variance divided by number of trials
+                color=color, alpha=point_alpha, marker=marker, linestyle='',
+                label=label, markersize=markersize, zorder=2,
+            )
+
+            ax.fill_between(
+                s['Ns'], s['ci_lower'] * bvar / s['Ns'], s['ci_upper'] * bvar / s['Ns'],
+                color=color, alpha=band_alpha, zorder=0,
+            )
+
+        # Reference curve: expected binomial variance p̂·(1-p̂)
+        ref = stats_dict['reference']
+        ax.plot(
+            ref['Ns'], ref['binomial_var'] / ref['Ns'],
+            color='k', linewidth=2,
+            label=r'$\mathrm{Var}(B(n, 0.5)) / n$',
+        )
+
+        ax.set_ylabel(r'$\mathrm{Var}(S_n) / n$', fontsize=fontsize)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+
 
     # Formatting common to both modes
     ax.set_yscale(yscale)
@@ -911,3 +945,194 @@ def plot_entropy_vs_sp(
     plt.tight_layout()
 
     return fig, axl, axh, plot_data
+
+
+# ---------------------------------------------------------------------------
+# Beta-Binomial fit visualizations
+# ---------------------------------------------------------------------------
+
+_BB_COLORS  = ['royalblue', 'forestgreen', 'gold', 'hotpink',
+                'mediumpurple', 'darkorange', 'crimson', 'teal']
+_BB_MARKERS = ['o', '^', 's', 'P', 'v', 'X', 'D', 'h']
+
+
+def _processing_label(key: str) -> str:
+    return 'Raw' if key == 'raw' else key.upper()
+
+
+def plot_beta_binomial_var(
+    fits,
+    ax=None,
+    figsize=None,
+    fontsize=12.5,
+    markersize=5,
+    band_alpha=0.15,
+    legend_kwargs=None,
+):
+    """
+    Plot Var(S_n)/n vs n with the fitted Beta-Binomial curve overlaid for
+    each processing level.
+
+    The scatter shows the empirical Var(S_n)/n; the solid curve is the
+    1-parameter fit q·(1+(n−1)·ρ); the shaded band covers the 95 % CI on ρ.
+    A dashed reference line shows q (the flat binomial expectation, ρ=0).
+
+    Parameters
+    ----------
+    fits : dict[str, BetaBinomialFit]
+        Keyed by processing name, e.g. as returned by
+        :func:`~analysis.stats.fit_beta_binomial_all_xor`.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on.  Created if None.
+    figsize : tuple, optional
+        Figure size.  Used only when ``ax`` is None.
+    fontsize : float, optional
+        Base font size.  Default: 12.5.
+    markersize : float, optional
+        Scatter marker size.  Default: 5.
+    band_alpha : float, optional
+        Alpha of the 95 % CI shaded band.  Default: 0.15.
+    legend_kwargs : dict, optional
+        Extra keyword arguments forwarded to ``ax.legend()``.
+
+    Returns
+    -------
+    fig, ax
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    n_dense = np.linspace(
+        min(f.Ns.min() for f in fits.values()),
+        max(f.Ns.max() for f in fits.values()),
+        400,
+    )
+
+    for i, (key, fit) in enumerate(fits.items()):
+        color  = _BB_COLORS[i % len(_BB_COLORS)]
+        marker = _BB_MARKERS[i % len(_BB_MARKERS)]
+        label  = _processing_label(key)
+
+        # Empirical Var(S_n)/n scatter
+        ax.scatter(fit.Ns, fit.vars_Sn / fit.Ns,
+                   color=color, marker=marker, s=markersize**2,
+                   alpha=0.8, zorder=3, label=label)
+
+        # Fitted curve
+        y_fit = fit.q * (1.0 + (n_dense - 1.0) * fit.rho)
+        ax.plot(n_dense, y_fit, color=color, lw=1.5, zorder=2)
+
+        # 95 % CI band on the fitted curve
+        y_lo = fit.q * (1.0 + (n_dense - 1.0) * fit.rho_lo)
+        y_hi = fit.q * (1.0 + (n_dense - 1.0) * fit.rho_hi)
+        ax.fill_between(n_dense, y_lo, y_hi, color=color, alpha=band_alpha, zorder=1)
+
+        # Binomial reference (flat at q for this processing level)
+        ax.axhline(fit.q, color=color, lw=0.8, ls='--', alpha=0.5, zorder=0)
+
+    ax.set_xlabel('Number of trials $n$', fontsize=fontsize)
+    ax.set_ylabel(r'$\mathrm{Var}(S_n)\,/\,n$', fontsize=fontsize)
+    ax.tick_params(axis='both', which='major', labelsize=fontsize - 1)
+
+    default_legend = {
+        'fontsize': fontsize - 2,
+        'bbox_to_anchor': (0.5, 1.02),
+        'loc': 'lower center',
+        'ncol': min(len(fits), 4),
+    }
+    if legend_kwargs:
+        default_legend.update(legend_kwargs)
+    ax.legend(**default_legend)
+
+    plt.tight_layout()
+    return fig, ax
+
+
+def plot_icc_results(
+    fits,
+    ax=None,
+    figsize=None,
+    fontsize=12.5,
+    markersize=8,
+    show_lb=False,
+    legend_kwargs=None,
+):
+    """
+    Error bar plot of the fitted ICC (ρ) for each processing level.
+
+    Error bars show the 95 % CI from ``rho_lo`` / ``rho_hi`` (corrected for
+    inter-observation correlations).  If ``show_lb=True``, a second, narrower
+    error bar shows the independence lower-bound SE for reference.
+
+    Parameters
+    ----------
+    fits : dict[str, BetaBinomialFit]
+        Keyed by processing name, e.g. as returned by
+        :func:`~analysis.stats.fit_beta_binomial_all_xor`.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on.  Created if None.
+    figsize : tuple, optional
+        Figure size.  Used only when ``ax`` is None.
+    fontsize : float, optional
+        Base font size.  Default: 12.5.
+    markersize : float, optional
+        Central point size.  Default: 8.
+    show_lb : bool, optional
+        If True, overlay narrow error bars for the independence lower bound.
+        Default: True.
+    legend_kwargs : dict, optional
+        Extra keyword arguments forwarded to ``ax.legend()``.
+
+    Returns
+    -------
+    fig, ax
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    keys   = list(fits.keys())
+    x_pos  = np.arange(len(keys))
+    labels = [_processing_label(k) for k in keys]
+
+    rhos    = np.array([fits[k].rho    for k in keys])
+    errs_lo = np.array([fits[k].rho    - fits[k].rho_lo for k in keys])
+    errs_hi = np.array([fits[k].rho_hi - fits[k].rho    for k in keys])
+
+    ax.errorbar(
+        x_pos, rhos, yerr=[errs_lo, errs_hi],
+        fmt='o', capsize=6, capthick=2, markersize=markersize,
+        color='royalblue', ecolor='royalblue', linewidth=2,
+        label='95 % CI (corr.)',
+        zorder=3,
+    )
+
+    if show_lb:
+        from scipy.stats import t as t_dist_local
+        dof_min  = min(fits[k].dof for k in keys)
+        t_crit   = t_dist_local.ppf(0.975, df=dof_min)
+        lb_errs  = np.array([fits[k].rho_se * t_crit for k in keys])
+        ax.errorbar(
+            x_pos, rhos, yerr=lb_errs,
+            fmt='none', capsize=3, capthick=1.5, linewidth=1.2,
+            ecolor='steelblue', alpha=0.6, label='95 % CI (indep. LB)',
+            zorder=4,
+        )
+
+    ax.axhline(0.0, color='gray', ls='--', lw=1.5, label=r'$\rho=0$ (binomial)')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, fontsize=fontsize - 1)
+    ax.set_xlabel('Processing', fontsize=fontsize)
+    ax.set_ylabel(r'$\hat{\rho}$  (ICC)', fontsize=fontsize)
+    ax.tick_params(axis='both', which='major', labelsize=fontsize - 1)
+
+    default_legend = {'fontsize': fontsize - 2, 'loc': 'best'}
+    if legend_kwargs:
+        default_legend.update(legend_kwargs)
+    ax.legend(**default_legend)
+
+    plt.tight_layout()
+    return fig, ax
