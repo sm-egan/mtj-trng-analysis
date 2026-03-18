@@ -10,6 +10,7 @@ __all__ = [
     "binomial_var",
     "binomial_var_of_sample_var",
     "chisquare_binomial_sample_var",
+    "binomial_sample_var_se",
     "compute_correlation_coefficients",
     "compute_binary_statistics",
     "load_binary_sequence",
@@ -60,7 +61,7 @@ def get_bernoulli_trials_statistics(binary_data, Ns=None):
 
         # Append basic stats to list
         means.append(np.mean(sum_array))
-        vars.append(np.var(sum_array))
+        vars.append(np.var(sum_array, ddof=1)) # Sample variance
         medians.append(np.median(sum_array))
 
     Ns = np.array(Ns)
@@ -80,6 +81,44 @@ def chisquare_binomial_sample_var(N_array, vars, nsamples, p=0.5):
     var_of_sample_var = binomial_var_of_sample_var(N_array, 1e6 / N_array, p)
 
     return np.sum(np.power(vars - binomial_var(N_array), 2) / var_of_sample_var)
+
+def binomial_sample_var_se(N_array, n_blocks, p=0.5):
+    """
+    Standard error of the unbiased sample variance of S_n ~ Binomial(n, p),
+    computed from L = n_blocks independent draws.
+ 
+    Uses the exact binomial central moments:
+        mu2 = n·p·q
+        mu4 = 3·n²·p²·q² + n·p·q·(1 - 6·p·q)
+ 
+    and the general result:
+        Var(S²) = (1/L) · [mu4 - ((L-3)/(L-1)) · mu2²]
+ 
+    Parameters
+    ----------
+    N_array : array-like
+        Block sizes (n in S_n ~ B(n,p)).
+    n_blocks : array-like
+        Number of independent blocks L at each block size.
+    p : float
+        Bit probability.
+ 
+    Returns
+    -------
+    se : np.ndarray
+        Standard error sqrt(Var(S²)) at each block size.
+    """
+    N_array = np.asarray(N_array, dtype=float)
+    n_blocks = np.asarray(n_blocks, dtype=float)
+    q = 1.0 - p
+    npq = N_array * p * q
+ 
+    mu2 = npq
+    mu4 = 3.0 * N_array**2 * p**2 * q**2 + npq * (1.0 - 6.0 * p * q)
+    var_S2 = (1.0 / n_blocks) * (mu4 - ((n_blocks - 3.0) / (n_blocks - 1.0)) * mu2**2)
+ 
+    var_S2 = np.maximum(var_S2, 0.0)  # clamp numerical noise
+    return np.sqrt(var_S2)
 
 def compute_correlation_coefficients(
     data: np.ndarray,

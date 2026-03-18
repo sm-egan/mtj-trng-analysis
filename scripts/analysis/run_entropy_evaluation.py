@@ -54,15 +54,15 @@ if __name__ == "__main__":
     #     skip_existing=True
     # )
 
-    pipeline.evaluate_entropy(
-        device_id="011_08",
-        # 51 to 475 includes 3 different reset pulse amplitudes: -0.6,-0.7,-0.8
-        polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
-        xor_levels=[8],
-        xor_overlaps={8:[0,1,2,3,4]},
-        tests=['non_iid', 'iid', 'restart'],
-        skip_existing=True
-    )
+    # pipeline.evaluate_entropy(
+    #     device_id="011_08",
+    #     # 51 to 475 includes 3 different reset pulse amplitudes: -0.6,-0.7,-0.8
+    #     polars_expr=(pl.col("row_number").is_between(51,425)) & (pl.col("repeats") == 1_000_000),
+    #     xor_levels=[8],
+    #     xor_overlaps={8:[0,1,2,3,4]},
+    #     tests=['non_iid', 'iid', 'restart'],
+    #     skip_existing=True
+    # )
 
     # pipeline.evaluate_entropy(
     #     device_id="011_08",
@@ -234,14 +234,14 @@ if __name__ == "__main__":
     ###############################################################
     ### Run entropy evaluation for D023_07
 
-    # pipeline.evaluate_entropy(
-    #     device_id="023_07",
-    #     #First run of 10 million repeats only 
-    #     polars_expr=(pl.col("row_number") == 290),
-    #     tests=['non_iid', 'iid', 'restart'],
-    #     #xor_method='rolling',
-    #     skip_existing=False
-    # )
+    pipeline.evaluate_entropy(
+        device_id="023_07",
+        #First run of 10 million repeats only 
+        polars_expr=(pl.col("row_number") == 290),
+        xor_levels=[2,4,8],
+        tests=['non_iid', 'iid', 'restart'],
+        skip_existing=False
+    )
 
     # pipeline.evaluate_entropy(
     #     device_id="023_07",
