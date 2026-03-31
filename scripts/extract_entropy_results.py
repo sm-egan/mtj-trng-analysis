@@ -89,7 +89,8 @@ def main():
         device_id=args.device,
         process_names=args.processes,
         output_csv=output_file,
-        correlation_lags=correlation_lags
+        correlation_lags=correlation_lags,
+        corr_sequence_max_len=1_000_000
     )
     
     print(f"\nExtracted {len(df)} results to {output_file}")

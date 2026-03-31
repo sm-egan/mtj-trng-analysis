@@ -44,14 +44,12 @@ def get_bernoulli_trials_statistics(binary_data, Ns=None):
         Ns = np.transpose(np.arange(1,10).reshape((9,1))*np.power(10, np.arange(2, order + 1))).flatten().astype(int)
         Ns = Ns[Ns <= maxN]
 
-    print(f'Ns array: {Ns}')
-
     for N in Ns:
         # Calculate number of nonoverlapping subsets of length N in 1 million bits
         nsubsets = len(data) // N
 
         if nsubsets * N < len(data):
-            print(f"Warning: {len(data)} bits is not a multiple of {N}, truncating data to {nsubsets * N} bits.")
+            # Truncate data to nsubsets * N for reshaping
             data_N = data[:nsubsets * N]
         else:
             data_N = data

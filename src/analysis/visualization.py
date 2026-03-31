@@ -58,7 +58,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
         show_plot = False
     
     mean = np.mean(values)
-    std = np.std(values)
+    std = np.std(values, ddof=1) # Sample standard deviation
 
     if not bins:
         bins = np.arange(np.min(values), np.max(values)+1)
@@ -92,7 +92,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
                    label=f'Mean = {mean:.3f}')
         if show_std:
             ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
-                    label=r'$\sigma$=' + f'{std:.1f}')
+                    label=r'$\sigma$=' + f'{std:.2f}')
     else:
         if title is None:
             ax.set_title(f'Histogram of successful switching attempts over {str(ntrials)} trials',
@@ -102,7 +102,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
                    label=f'Mean = {int(mean)}')
         if show_std:
             ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
-                    label=r'$\sigma$=' + f'{std:.1f}')
+                    label=r'$\sigma$=' + f'{std:.2f}')
     
     if title is not None:
         ax.set_title(title, fontsize=fontsize, fontweight='bold')
@@ -175,7 +175,7 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
         data = np.sum(data[0:len(data) * ntrials].reshape((nsubsets, ntrials)), axis=1) / ntrials
     
     sp_mean = np.mean(data)
-    sp_std = np.std(data)
+    sp_std = np.std(data, ddof=1) # Sample standard deviation
     sp_median = np.median(data)
     
     if sp_mean < 1:
@@ -213,7 +213,7 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
         ax.hlines(sp_mean, 0, np.max(x), colors='r', linestyles='dashed', 
                   label=f"Mean = {int(sp_mean)}", linewidth=linewidth if linewidth else 5)
         ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1, 
-                   label=r'$\sigma$=' + f'{sp_std:.1f}')
+                   label=r'$\sigma$=' + f'{sp_std:.2f}')
         if not hide_ylabel:
             ax.set_ylabel('Successes', fontsize=fontsize, fontweight='bold')
     
@@ -495,18 +495,14 @@ def plot_Sn_variance(
     yscale='linear',
 ):
     """
-    Plot sample variance across trial sizes for MTJ TRNG Bernoulli trials, for raw binary data and XOR-whitened versions, with confidence bands.
+    Plot sample variance across trial sizes for MTJ TRNG Bernoulli trials,
+    for raw binary data and XOR-whitened versions, with confidence bands.
 
-    When normalize='ratio' (default), the y-axis shows the raw variance ratio
-    Var_hat / Var_true with per-curve chi-squared CI bands. Each processing
-    level has its own band width because XOR whitening reduces the sequence
-    length and therefore the number of blocks k.
-
-    When normalize='zscore', the y-axis is z-scored as
-    (R - 1) / sqrt(2 / (k-1)), which is approximately N(0, 1) under the null
-    for all processing levels. This makes the confidence band a single shared
-    band at ±z_crit (normal approximation), allowing fair visual comparison
-    across XOR levels with different sample counts.
+    The null hypothesis is S_n ~ B(n, 1/2).  Confidence bands are computed
+    under this null using the exact binomial fourth central moment, so they
+    represent the expected scatter if the bits were IID fair coins.  The
+    bands differ between processing levels only because XOR whitening
+    reduces the sequence length and therefore the number of blocks L.
 
     Parameters
     ----------
@@ -520,6 +516,8 @@ def plot_Sn_variance(
         Default: np.arange(100, 10001, 100).
     p_hat : float, optional
         Estimated probability of bit=1. If None, computed as np.mean(binary_data).
+        Used only for informational purposes in the returned stats_dict;
+        all CI bands use p=0.5 (the null hypothesis).
     confidence_level : float, default 0.95
         Confidence level for the bands (0.95 = 95% CI).
     ax : matplotlib.axes.Axes, optional
@@ -539,45 +537,22 @@ def plot_Sn_variance(
         Number of columns in the legend.
     legend_kwargs : dict, optional
         Override any other default legend keyword arguments.
-    normalize : {'ratio', 'zscore', 'variance'}, default 'ratio'
-        'ratio'    — plot raw variance ratio R = Var_hat / Var_true with
-                     per-curve chi-squared CI bands (original behavior).
-        'zscore'   — plot (R-1) / sqrt(2/(k-1)), i.e. standard deviations
-                     from ideal Bernoulli. The confidence band becomes a
-                     single shared band at ±z_crit for all processing levels,
-                     enabling fair comparison across XOR degrees.
-        'variance' — plot raw sample variance Var(Sn) directly, with
-                     per-curve chi-squared CI bands scaled to variance units.
-                     Reference curve is the expected binomial variance
-                     n·p̂·(1−p̂), which grows linearly with n.
+    normalize : {'ratio', 'zscore', 'variance', 'n'}, default 'ratio'
+        'ratio'    — plot R = Var_hat / (n/4) with CI bands as ratios.
+        'zscore'   — plot (R-1) / sqrt(2/(k-1)), shared ±z_crit band.
+        'variance' — plot sample variance directly, CI in variance units.
+        'n'        — plot Var(S_n)/n, CI divided by n.
+    point_alpha : float, default 1.0
+        Alpha for data point markers.
+    yscale : str, default 'linear'
+        Y-axis scale ('linear' or 'log').
 
     Returns
     -------
     fig : matplotlib.figure.Figure
     ax : matplotlib.axes.Axes
     stats_dict : dict
-        Computed statistics for each processing level. Structure::
-
-            {
-                'raw': {
-                    'Ns': array, 'means': array, 'vars': array,
-                    'medians': array, 'normalized_vars': array,
-                    'z_scores': array,   # (R-1) / sqrt(2/(k-1))
-                    'n_samples': int, 'n_blocks': array,
-                    'ci_lower': array, 'ci_upper': array,
-                },
-                'xor02': { ... same structure ... },
-                ...
-                'reference': {
-                    'Ns': array, 'p_hat': float, 'binomial_var': array,
-                },
-                'z_crit': float,   # normal-approx CI threshold (e.g. 1.96)
-            }
-
-    Example
-    -------
-    >>> fig, ax, stats = plot_Sn_variance(binary_data, xor_levels=[2, 4, 8])
-    >>> fig.savefig(figpath / reg.figname(FID, "norm_variance"))
+        Computed statistics for each processing level.
     """
     import numpy as np
     import matplotlib.pyplot as plt
@@ -589,6 +564,8 @@ def plot_Sn_variance(
         binomial_sample_var_se,
     )
 
+    p_null = 0.5  # null hypothesis: fair coin
+
     if Ns is None:
         Ns = np.arange(100, 10001, 100)
 
@@ -597,22 +574,22 @@ def plot_Sn_variance(
 
     alpha = 1 - confidence_level
 
-    def compute_ci_bounds_binomial(Ns, n_blocks, p):
-        """CI on Var(S_n) in variance units, using exact binomial mu4."""
+    def compute_ci_bounds_binomial(Ns, n_blocks):
+        """CI on Var(S_n) in variance units under H0: p = 0.5."""
         z = scipy_norm.ppf(1.0 - alpha / 2.0)
-        se = binomial_sample_var_se(Ns, n_blocks, p=p)
-        expected_var = Ns * p * (1.0 - p)
+        se = binomial_sample_var_se(Ns, n_blocks, p=p_null)
+        expected_var = binomial_var(Ns, p=p_null)
         return expected_var - z * se, expected_var + z * se
 
     def compute_stats_for_array(data_array, label):
         """Compute variance statistics and confidence bands for one binary array."""
         n_samples = len(data_array)
         Ns_out, means, vars_, medians, _ = get_bernoulli_trials_statistics(data_array, Ns=Ns)
-        bvar = binomial_var(Ns_out, p=p_hat)
+        bvar_null = binomial_var(Ns_out, p=p_null)
         n_blocks = n_samples // Ns_out
-        ci_lower, ci_upper = compute_ci_bounds_binomial(Ns_out, n_blocks, p=p_hat)
+        ci_lower, ci_upper = compute_ci_bounds_binomial(Ns_out, n_blocks)
 
-        normalized_vars = vars_ / bvar
+        normalized_vars = vars_ / bvar_null
         z_scores = (normalized_vars - 1) / np.sqrt(2 / (n_blocks - 1))
 
         return {
@@ -621,10 +598,11 @@ def plot_Sn_variance(
             'vars': vars_,
             'medians': medians,
             'normalized_vars': normalized_vars,
+            'bvar_null': bvar_null,   # expected variance under H0: n * 0.5 * 0.5
             'z_scores': z_scores,
             'n_samples': n_samples,
             'n_blocks': n_blocks,
-            'ci_lower': ci_lower,
+            'ci_lower': ci_lower,     # CI in variance units (under H0)
             'ci_upper': ci_upper,
         }
 
@@ -645,7 +623,7 @@ def plot_Sn_variance(
     stats_dict['reference'] = {
         'Ns': Ns,
         'p_hat': p_hat,
-        'binomial_var': binomial_var(Ns, p=p_hat),
+        'binomial_var': binomial_var(Ns, p=p_null),
     }
     stats_dict['z_crit'] = float(scipy_norm.ppf(1 - alpha / 2))
 
@@ -710,7 +688,7 @@ def plot_Sn_variance(
 
             # Per-curve confidence band
             ax.fill_between(
-                s['Ns'], s['ci_lower'] / s['bvar'], s['ci_upper'] / s['bvar'],
+                s['Ns'], s['ci_lower'] / s['bvar_null'], s['ci_upper'] / s['bvar_null'],
                 color=color, alpha=band_alpha, zorder=0,
             )
 
@@ -721,7 +699,7 @@ def plot_Sn_variance(
         )
 
         ax.set_ylabel(
-            r'$\frac{\mathrm{Var}(S_n)}{\mathrm{Var}(B(n, 0.5))}$',
+            r'$\frac{\widehat{\mathrm{Var}}(S_n)}{\mathrm{Var}(B(n, 0.5))}$',
             fontsize=fontsize,
         )
         if ylim is not None:
@@ -732,9 +710,6 @@ def plot_Sn_variance(
             s = stats_dict[key]
             color = all_colors[i % len(all_colors)]
             marker = all_markers[i % len(all_markers)]
-
-            # Scale CI bounds from ratio space back to variance units
-            bvar = s['vars'] / s['normalized_vars']
 
             ax.plot(
                 s['Ns'], s['vars'],
@@ -747,15 +722,15 @@ def plot_Sn_variance(
                 color=color, alpha=band_alpha, zorder=0,
             )
 
-        # Reference curve: expected binomial variance n·p̂·(1-p̂)
+        # Reference curve: expected binomial variance under H0
         ref = stats_dict['reference']
         ax.plot(
             ref['Ns'], ref['binomial_var'],
             color='k', linewidth=2,
-            label=r'$np(1-p)$',
+            label=r'$np(1-p)$, $p=\frac{1}{2}$',
         )
 
-        ax.set_ylabel(r'$\mathrm{Var}(S_n)$', fontsize=fontsize)
+        ax.set_ylabel(r'$\widehat{\mathrm{Var}}(S_n)$', fontsize=fontsize)
         if ylim is not None:
             ax.set_ylim(ylim)
 
@@ -765,11 +740,8 @@ def plot_Sn_variance(
             color = all_colors[i % len(all_colors)]
             marker = all_markers[i % len(all_markers)]
 
-            # Scale CI bounds from ratio space back to variance units
-            bvar = s['vars'] / s['normalized_vars']
-
             ax.plot(
-                s['Ns'], s['vars'] / s['Ns'],  # variance divided by number of trials
+                s['Ns'], s['vars'] / s['Ns'],
                 color=color, alpha=point_alpha, marker=marker, linestyle='',
                 label=label, markersize=markersize, zorder=2,
             )
@@ -779,20 +751,19 @@ def plot_Sn_variance(
                 color=color, alpha=band_alpha, zorder=0,
             )
 
-        # Reference curve: expected binomial variance p̂·(1-p̂)
+        # Reference curve: expected binomial variance under H0 divided by n
         ref = stats_dict['reference']
         ax.plot(
             ref['Ns'], ref['binomial_var'] / ref['Ns'],
             color='k', linewidth=2,
-            label=r'$\mathrm{Var}(B(n, 0.5)) / n$',
+            label=r'$p(1-p)$, $p=\frac{1}{2}$',
         )
 
-        ax.set_ylabel(r'$\mathrm{Var}(S_n) / n$', fontsize=fontsize)
+        ax.set_ylabel(r'$\widehat{\mathrm{Var}}(S_n) / n$', fontsize=fontsize)
         if ylim is not None:
             ax.set_ylim(ylim)
 
-
-    # Formatting common to both modes
+    # Formatting common to all modes
     ax.set_yscale(yscale)
     ax.set_xlabel('Number of trials (n)', fontsize=fontsize)
     ax.tick_params(axis='both', which='major', labelsize=fontsize - 1)
@@ -812,7 +783,6 @@ def plot_Sn_variance(
 
     return fig, ax, stats_dict
 
-
 def plot_entropy_vs_sp(
     df,
     entropy_per_bit,
@@ -827,6 +797,8 @@ def plot_entropy_vs_sp(
     legend_y=1.0,
     legend_x=0.5,
     ax=None,
+    histogram=True,
+    alpha=0.8,
 ):
     """
     Two-panel figure: min-entropy vs. raw switching probability (left) with a
@@ -866,6 +838,9 @@ def plot_entropy_vs_sp(
         legend_x: x-coordinate (axes fraction) for the main series legend. Default: 0.5.
         ax: Optional existing Axes to plot into. When provided, no figure is created
             and the histogram panel is skipped.
+        histogram: If False, suppress the histogram panel, produce a single-axes figure,
+            and skip all internal legend creation so the caller can build a custom legend.
+            Default: True.
 
     Returns:
         tuple: (fig, axl, axh, plot_data)
@@ -895,10 +870,14 @@ def plot_entropy_vs_sp(
 
     if ax is None:
         figsize = figsize_from_width_cm(width_cm, aspect)
-        fig, (axl, axh) = plt.subplots(
-            ncols=2, width_ratios=[3, 1], figsize=figsize,
-            sharey=True, gridspec_kw={'wspace': 0.1}
-        )
+        if histogram:
+            fig, (axl, axh) = plt.subplots(
+                ncols=2, width_ratios=[3, 1], figsize=figsize,
+                sharey=True, gridspec_kw={'wspace': 0.1}
+            )
+        else:
+            fig, axl = plt.subplots(figsize=figsize)
+            axh = None
     else:
         fig = None
         axl = ax
@@ -919,7 +898,7 @@ def plot_entropy_vs_sp(
         sps = data.select(["switching_probability"]).to_numpy()
         entropies = data.select([entropy_col]).to_numpy()
         label = proc.capitalize() if proc == "raw" else proc.split('_')[0].upper()
-        (line,) = axl.plot(sps, entropies, markersize=8, label=label)
+        (line,) = axl.plot(sps, entropies, markersize=8, label=label, alpha=alpha)
         plot_data[proc] = {"sps": sps, "entropies": entropies, "_line": line}
 
     # Dotted IID overlay (only when iid_col is provided)
@@ -957,6 +936,11 @@ def plot_entropy_vs_sp(
     axl.set_xticks(np.linspace(0, 1, 11, endpoint=True))
     axl.set_yticks(np.arange(0,11,2) / 10, minor=True)
 
+    axl.grid(axis='both', which='both')
+
+    if axh is None:
+        return fig, axl, axh, plot_data
+
     # Main legend above the plot (series only)
     main_leg = axl.legend(bbox_to_anchor=(legend_x, legend_y), loc='upper center', ncol=3, fontsize=fontsize - 1)
     axl.add_artist(main_leg)
@@ -965,14 +949,9 @@ def plot_entropy_vs_sp(
     from matplotlib.lines import Line2D
     iid_handle = Line2D([0], [0], marker='o', color='black', linestyle='',
                         markersize=9, markerfacecolor='none', markeredgewidth=1.5, markeredgecolor=(0, 0, 0, 0.7))
-    axl.legend(handles=[iid_handle], labels=['IID pass'],
+    axl.legend(handles=[iid_handle], labels=['Passed IID'],
                loc='lower right', fontsize=fontsize - 2,
                handlelength=0.5, borderpad=0.4, framealpha=0.85)
-
-    axl.grid(axis='both', which='both')
-
-    if axh is None:
-        return fig, axl, axh, plot_data
 
     # Right panel: NIST entropy histogram
     bins = np.linspace(0, 1, 51, endpoint=True)
