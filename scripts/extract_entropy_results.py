@@ -45,6 +45,9 @@ def main():
                                  "(e.g., --lags-expr \"np.arange(0, 21)\" or "
                                  "\"(2**np.arange(0,21)).tolist()\")")
 
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel workers for binary statistics (default: 1 = serial)")
+
     args = parser.parse_args()
 
     # Resolve correlation lags
@@ -82,6 +85,7 @@ def main():
     print(f"Device: {args.device if args.device else 'All devices'}")
     print(f"Processes: {args.processes if args.processes else 'All processes'}")
     print(f"Correlation lags: {correlation_lags if correlation_lags else 'Default (powers of 2, 2^0 to 2^20)'}")
+    print(f"Workers: {args.workers}")
     print(f"Output file: {output_file}")
 
     # Collect results
@@ -90,7 +94,8 @@ def main():
         process_names=args.processes,
         output_csv=output_file,
         correlation_lags=correlation_lags,
-        corr_sequence_max_len=1_000_000
+        corr_sequence_max_len=1_000_000,
+        max_workers=args.workers
     )
     
     print(f"\nExtracted {len(df)} results to {output_file}")
