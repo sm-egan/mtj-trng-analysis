@@ -1290,7 +1290,7 @@ class EntropyEvaluationPipeline:
 
                     # Add binary statistics to the result
                     if include_binary_stats:
-                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags)
+                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags, corr_sequence_max_len)
                         result.update(binary_stats)
 
                     # Add result to the list
