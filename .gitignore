@@ -51,3 +51,6 @@ esv/
 
 # Misc
 context/
+
+# Claude code
+.claude/
