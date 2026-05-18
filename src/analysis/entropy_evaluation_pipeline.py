@@ -12,6 +12,55 @@ from src.analysis.stats import compute_binary_statistics
 import sqlite3
 
 
+def _compute_binary_stats_worker(args):
+    """
+    Module-level worker for ProcessPoolExecutor (must be picklable).
+
+    Reads a binary file and computes statistics (mean, variance, correlations).
+
+    Args:
+        args: tuple of (device_id, process_name, file_hash, output_base,
+              correlation_lags, corr_sequence_max_len)
+
+    Returns:
+        tuple of (index, stats_dict) where stats_dict has keys like
+        'mean', 'variance', 'corr_lag_1', etc.
+    """
+    idx, device_id, process_name, file_hash, output_base, correlation_lags, corr_sequence_max_len = args
+
+    if correlation_lags is None:
+        correlation_lags = (2 ** np.arange(0, 21)).tolist()
+
+    stats_result = {'mean': None, 'variance': None}
+    for lag in correlation_lags:
+        stats_result[f'corr_lag_{lag}'] = None
+
+    bin_file = Path(output_base) / device_id / process_name / f"{file_hash}.bin"
+    if not bin_file.exists():
+        return idx, stats_result
+
+    try:
+        data = np.frombuffer(bin_file.read_bytes(), dtype=np.uint8)
+        if len(data) == 0:
+            return idx, stats_result
+
+        stats = compute_binary_statistics(
+            data,
+            correlation_lags=correlation_lags,
+            corr_sequence_max_len=corr_sequence_max_len
+        )
+
+        stats_result['mean'] = stats['mean']
+        stats_result['variance'] = stats['variance']
+        for lag in correlation_lags:
+            if lag in stats['correlations']:
+                stats_result[f'corr_lag_{lag}'] = stats['correlations'][lag]
+
+        return idx, stats_result
+    except Exception:
+        return idx, stats_result
+
+
 class EntropyEvaluationPipeline:
     """Pipeline for running NIST SP 800-90B entropy evaluation tests"""
     
@@ -1140,10 +1189,11 @@ class EntropyEvaluationPipeline:
             return "Error extracting metadata"    
     
     def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None,
-                                include_binary_stats=True, correlation_lags=None, corr_sequence_max_len=None):
+                                include_binary_stats=True, correlation_lags=None, corr_sequence_max_len=None,
+                                max_workers=None):
         """
         Collect entropy test results from all test files and compile into a CSV.
-        
+
         Args:
             device_id: Specific device to process (if None, all devices)
             process_names: Specific processes to include (if None, all processes)
@@ -1151,6 +1201,8 @@ class EntropyEvaluationPipeline:
             include_binary_stats: Whether to include binary file statistics (default: True)
             correlation_lags: List of correlation lags to compute (default: [1, 2, 4, ..., 1024])
             corr_sequence_max_len: int number of terms in auto-correlation sum from sample 1 to N-k = corr_sequence_max_len
+            max_workers: Number of parallel workers for binary stats computation.
+                None or 1 = serial (default). >1 = parallel via ProcessPoolExecutor.
 
         Returns:
             pd.DataFrame: DataFrame with entropy results
@@ -1288,14 +1340,40 @@ class EntropyEvaluationPipeline:
                     elif result['h_final_non_iid'] is not None:
                         result['h_final'] = result['h_final_non_iid']
 
-                    # Add binary statistics to the result
-                    if include_binary_stats:
-                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags, corr_sequence_max_len)
-                        result.update(binary_stats)
-
-                    # Add result to the list
+                    # Add result to the list (binary stats computed in second pass)
                     results_list.append(result)
-        
+
+        # Second pass: compute binary statistics (parallelizable)
+        if include_binary_stats and results_list:
+            use_parallel = max_workers is not None and max_workers > 1
+
+            if use_parallel:
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+
+                tasks = [
+                    (i, r['device'], r['processing'], r['raw_hash'],
+                     str(self.output_base), correlation_lags, corr_sequence_max_len)
+                    for i, r in enumerate(results_list)
+                ]
+
+                self.logger.info(f"Computing binary statistics for {len(tasks)} entries with {max_workers} workers...")
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_compute_binary_stats_worker, t): t[0] for t in tasks}
+                    for future in as_completed(futures):
+                        idx = futures[future]
+                        try:
+                            _, stats = future.result()
+                            results_list[idx].update(stats)
+                        except Exception as e:
+                            self.logger.error(f"Worker error for index {idx}: {e}")
+            else:
+                for i, result in enumerate(results_list):
+                    binary_stats = self._get_binary_statistics(
+                        result['device'], result['processing'], result['raw_hash'],
+                        correlation_lags, corr_sequence_max_len
+                    )
+                    result.update(binary_stats)
+
         # Create DataFrame
         df = pd.DataFrame(results_list).sort_values(by=['device', 'r_amplitude', 'r_width', 'processing', 'switching_probability'])
         

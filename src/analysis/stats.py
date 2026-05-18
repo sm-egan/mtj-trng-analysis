@@ -154,41 +154,68 @@ def compute_correlation_coefficients(
     """
     if lags is None:
         lags = (2 ** np.arange(0, 21)).tolist()
-    
+
     # Convert to float for calculations
     data = data.astype(np.float64)
+    n = len(data)
     correlations = {}
-    
-    for lag in lags:
-        if lag >= len(data):
-            # Skip lags that exceed data length
-            continue
-        
-        # Determine the subsequences based on max_len
-        if max_len is not None and (len(data) - lag) >= max_len:
-            x = data[:max_len]
-            y = data[lag:max_len + lag]
-        else:
-            x = data[:-lag] if lag > 0 else data
-            y = data[lag:] if lag > 0 else data
-        
-        # Compute means of each subsequence
+
+    # Precompute x = data[:max_len] statistics once, since x is identical for
+    # all lags where max_len + lag <= len(data).
+    x_precomputed = None
+    if max_len is not None and n > max_len:
+        x = data[:max_len]
         x_mean = np.mean(x)
-        y_mean = np.mean(y)
-        
-        # Center the sequences
         x_centered = x - x_mean
-        y_centered = y - y_mean
-        
-        # Compute correlation
-        numerator = np.sum(x_centered * y_centered)
-        denominator = np.sqrt(np.sum(x_centered**2) * np.sum(y_centered**2))
-        
+        sum_x_centered_sq = np.sum(x_centered ** 2)
+        x_precomputed = (x_centered, sum_x_centered_sq)
+
+    for lag in lags:
+        if lag >= n:
+            continue
+
+        if lag == 0:
+            correlations[lag] = 1.0
+            continue
+
+        # Fast path: x = data[:max_len] is the precomputed slice
+        if x_precomputed is not None and (n - lag) >= max_len:
+            x_centered, sum_x_centered_sq = x_precomputed
+            y = data[lag:max_len + lag]
+
+            # Numerator simplification: since sum(x_centered) == 0,
+            # sum(x_centered * (y - y_mean)) = sum(x_centered * y)
+            numerator = np.sum(x_centered * y)
+
+            # Denominator: sum((y - y_mean)^2) = sum(y^2) - max_len * y_mean^2
+            # For binary data (0/1): y^2 = y, so sum(y^2) = sum(y)
+            sum_y = np.sum(y)
+            sum_y_centered_sq = sum_y - sum_y ** 2 / max_len
+            denominator = np.sqrt(sum_x_centered_sq * sum_y_centered_sq)
+        else:
+            # Fallback: tail lags where x slice changes, or max_len is None
+            if max_len is not None and (n - lag) >= max_len:
+                x = data[:max_len]
+                y = data[lag:max_len + lag]
+            else:
+                x = data[:-lag]
+                y = data[lag:]
+
+            x_mean = np.mean(x)
+            x_centered_local = x - x_mean
+            numerator = np.sum(x_centered_local * y)
+
+            sum_y = np.sum(y)
+            m = len(y)
+            sum_x_centered_sq_local = np.sum(x_centered_local ** 2)
+            sum_y_centered_sq = sum_y - sum_y ** 2 / m
+            denominator = np.sqrt(sum_x_centered_sq_local * sum_y_centered_sq)
+
         if denominator > 0:
             correlations[lag] = float(numerator / denominator)
         else:
             correlations[lag] = 0.0
-    
+
     return correlations
 
 def compute_binary_statistics(
