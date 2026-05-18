@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 from typing import List, Optional, Tuple
 from src.analysis.processing import xorn_whitening
-from src.analysis.stats import compute_binary_statistics, compute_correlation_coefficients
+from src.analysis.stats import compute_binary_statistics
 import sqlite3
 
 
@@ -1290,7 +1290,7 @@ class EntropyEvaluationPipeline:
 
                     # Add binary statistics to the result
                     if include_binary_stats:
-                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags)
+                        binary_stats = self._get_binary_statistics(current_device, current_process, file_hash, correlation_lags, corr_sequence_max_len)
                         result.update(binary_stats)
 
                     # Add result to the list

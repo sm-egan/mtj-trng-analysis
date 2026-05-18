@@ -43,7 +43,7 @@ def main():
     lags_group.add_argument("--lags-expr", dest="lags_expr",
                             help="NumPy expression for lags, evaluated with np available "
                                  "(e.g., --lags-expr \"np.arange(0, 21)\" or "
-                                 "\"(2**np.arange(0,21)).tolist()\")")
+                                 "\"(2**np.arange(0,21)).tolist()\")") #Escapes are only for help formatting and should not be added to command line argument
 
     args = parser.parse_args()
 

@@ -31,10 +31,11 @@ def figsize_from_width_cm(width_cm, aspect=1):
     cm_to_inch = 1 / 2.54
     return (width_cm * cm_to_inch, aspect * width_cm * cm_to_inch)
 
-def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False, 
-                          binomial_pdf=True, binomial_p=None, density=True, align='left', title=None, ax=None, 
+def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False,
+                          binomial_pdf=True, binomial_p=None, density=True, align='left', title=None, ax=None,
                           fontsize=16, hide_ylabel=False, show_plot=True, show_std=True,
-                          color=None, alpha=0.8, label=None, linewidth=None, legend_ncols=1):
+                          color=None, alpha=0.8, label=None, linewidth=None, legend_ncols=1,
+                          legend_show=(True, True, True), legend_kwargs=None):
     """
     Plot histogram of binomial data with optional binomial PDF overlay.
     
@@ -49,6 +50,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
     """
     plt.rcParams['font.weight'] = 'bold'
     plt.rcParams['font.size'] = fontsize
+    _show_mean_legend, _show_std_legend, _show_pdf_legend = legend_show
 
     # Create figure/axis if not provided
     if ax is None:
@@ -88,21 +90,21 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
                         fontsize=fontsize, fontweight='bold'
                         )
         ax.set_xlabel('Switching probability', fontsize=fontsize)
-        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=linewidth if linewidth else 1, 
-                   label=f'Mean = {mean:.3f}')
+        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=linewidth,
+                   label=f'Mean = {mean:.3f}' if _show_mean_legend else None)
         if show_std:
-            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
-                    label=r'$\sigma$=' + f'{std:.2f}')
+            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2,
+                    label=r'$\sigma$=' + f'{std:.2f}' if _show_std_legend else None)
     else:
         if title is None:
             ax.set_title(f'Histogram of successful switching attempts over {str(ntrials)} trials',
                         fontsize=fontsize, fontweight='bold')
         ax.set_xlabel('Successes', fontsize=fontsize, fontweight='bold')
-        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=linewidth*3 if linewidth else 3, 
-                   label=f'Mean = {int(mean)}')
+        ax.axvline(mean, color=meanstd_color, linestyle='dashed', linewidth=linewidth,
+                   label=f'Mean = {int(mean)}' if _show_mean_legend else None)
         if show_std:
-            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2, 
-                    label=r'$\sigma$=' + f'{std:.2f}')
+            ax.axvspan(mean - std, mean + std, color=meanstd_color, alpha=0.2,
+                    label=r'$\sigma$=' + f'{std:.2f}' if _show_std_legend else None)
     
     if title is not None:
         ax.set_title(title, fontsize=fontsize, fontweight='bold')
@@ -131,10 +133,13 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
             #prefactor = comb(ntrials, bins_for_pdf)
             pdf = binom.pmf(bins_for_pdf, ntrials, p)
             #prefactor * (np.power(p, bins_for_pdf) * np.power(1 - p, ntrials - bins_for_pdf))
-            ax.plot(bins, pdf, 'k-.', label=binomial_label, linewidth=linewidth*5 if linewidth else 5)
+            ax.plot(bins, pdf, 'k-.', label=binomial_label if _show_pdf_legend else None, linewidth=linewidth, alpha=0.8)
     
     # Legend on plot
-    ax.legend(fontsize=fontsize-2, loc='upper left', ncol=legend_ncols)
+    _legend_kw = {'fontsize': fontsize - 2, 'loc': 'upper left', 'ncol': legend_ncols}
+    if legend_kwargs:
+        _legend_kw.update(legend_kwargs)
+    ax.legend(**_legend_kw)
     # Legend above plot
     #ax.legend(fontsize=fontsize-4, bbox_to_anchor=(0.5, 1.02), loc='lower center', ncol=1)
     ax.tick_params(axis='both', which='major', labelsize=fontsize)
@@ -147,7 +152,7 @@ def plot_binomial_histogram(values, ntrials, bins=None, plot_probabilities=False
 
 def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
                          fontsize=14, hide_ylabel=False, verbose=True, linewidth=None, legend_loc='lower left',
-                         edgecolor=None):
+                         edgecolor=None, legend_kwargs=None, legend_show=(True, True)):
     """
     Plot switching probability scatter plot over trials.
     
@@ -161,6 +166,8 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     Returns:
         tuple: (fig, ax) - Figure and Axes objects
     """
+    _show_mean_legend, _show_sigma_legend = legend_show
+
     # Create figure/axis if not provided
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -168,7 +175,7 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     else:
         fig = ax.get_figure()
         show_plot = False
-    
+
     # Process data
     if data.dtype == np.uint8:
         nsubsets = int(len(data) / ntrials)
@@ -203,20 +210,23 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     ax.set_xlabel(r'Sample Number ($10^6$)', fontsize=fontsize, fontweight='bold')
     
     if np.all(data < 1):
-        ax.hlines(sp_mean, 0, np.max(x), colors='r', linestyles='dashed', 
-                  label=f"Mean = {sp_mean:.4f}", linewidth=linewidth if linewidth else 5)
-        ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1, 
-                   label=r'$\sigma$=' + f"{sp_std:.4f}")
+        mean_label = r'$\mu=$' + f"{sp_mean:.4f}" if _show_mean_legend else None
+        std_label = r'$\sigma=$' + f"{sp_std:.4f}" if _show_sigma_legend else None
         if not hide_ylabel:
             ax.set_ylabel('Switching Probability', fontsize=fontsize, fontweight='bold')
     else:
-        ax.hlines(sp_mean, 0, np.max(x), colors='r', linestyles='dashed', 
-                  label=f"Mean = {int(sp_mean)}", linewidth=linewidth if linewidth else 5)
-        ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1, 
-                   label=r'$\sigma$=' + f'{sp_std:.2f}')
+        mean_label = r'$\mu=$' + f"{int(sp_mean)}" if _show_mean_legend else None
+        std_label = r'$\sigma=$' + f"{sp_std:.2f}" if _show_sigma_legend else None
         if not hide_ylabel:
             ax.set_ylabel('Successes', fontsize=fontsize, fontweight='bold')
     
+    xrange = np.max(x) - np.min(x)
+    ax.hlines(sp_mean, np.min(x) - xrange * 0.01, np.max(x) + xrange * 0.01, colors='r', linestyles='dashed',
+                label=mean_label if _show_mean_legend else None,
+                linewidth=linewidth if linewidth else 5)
+    ax.axhspan(sp_mean - sp_std, sp_mean + sp_std, color='r', alpha=0.1,
+                label=std_label if _show_sigma_legend else None)
+        
     if title is None:
         if np.all(data < 1):
             ax.set_title(f'Switching probability over {str(int(ntrials))} trials',
@@ -227,7 +237,10 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     else:
         ax.set_title(title, fontsize=fontsize, fontweight='bold')
     
-    ax.legend(fontsize=fontsize-2, loc=legend_loc)
+    _legend_kw = {'fontsize': fontsize - 2, 'loc': legend_loc}
+    if legend_kwargs:
+        _legend_kw.update(legend_kwargs)
+    ax.legend(**_legend_kw)
     ax.tick_params(axis='both', which='major', labelsize=fontsize)
     
     if show_plot:
@@ -236,9 +249,12 @@ def plot_switching_scatter(data, ntrials, markersize=None, title=None, ax=None,
     return fig, ax
 
 
-def plot_comparison_subplots(data1, data2, ntrials, plot_type='histogram', 
-                           titles=None, figsize=(12, 10), sharey=True, 
-                           fontsize=14, **kwargs):
+def plot_comparison_subplots(data1, data2, ntrials, plot_type='histogram',
+                           titles=None, figsize=(12, 10), sharey=True,
+                           fontsize=14, ylim=None,
+                           left_legend_kwargs=None, right_legend_kwargs=None,
+                           left_legend_show=None, right_legend_show=None,
+                           **kwargs):
     """
     Convenience function to plot two datasets in vertically aligned subplots.
     
@@ -250,34 +266,52 @@ def plot_comparison_subplots(data1, data2, ntrials, plot_type='histogram',
         figsize: Figure size tuple
         sharey: Bool, whether to share y-axis between subplots (default True)
         fontsize: Font size for labels and legends
+        left_legend_kwargs: Dict of kwargs forwarded to ax.legend() for the left panel
+            (overrides defaults). Supports fontsize, ncol, bbox_to_anchor, loc, etc.
+        right_legend_kwargs: Same as left_legend_kwargs for the right panel.
+        left_legend_show: Tuple of bools controlling which legend items are labelled
+            in the left panel. For 'histogram': (show_mean, show_sigma, show_pdf).
+            For 'scatter': (show_mean, show_sigma). Defaults to all True.
+        right_legend_show: Same as left_legend_show for the right panel.
         **kwargs: Additional arguments passed to plotting functions
-    
+
     Returns:
         tuple: (fig, axes) where axes is [ax1, ax2] for top and bottom
     """
     
     if plot_type == 'histogram':
         fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
-        # Left plot - keep y-label
-        plot_binomial_histogram(data1, ntrials, ax=axes[0], 
-                              title=titles[0] if titles else None, 
-                              fontsize=fontsize, hide_ylabel=False, **kwargs)
-        # Right plot - hide y-label since it's shared
-        plot_binomial_histogram(data2, ntrials, ax=axes[1], 
-                              title=titles[1] if titles else None, 
-                              fontsize=fontsize, hide_ylabel=True, **kwargs)
-        
+        _left_legend_show = left_legend_show or (True, True, True)
+        _right_legend_show = right_legend_show or (True, True, True)
+        plot_binomial_histogram(data1, ntrials, ax=axes[0],
+                              title=titles[0] if titles else None,
+                              fontsize=fontsize, hide_ylabel=False,
+                              legend_kwargs=left_legend_kwargs,
+                              legend_show=_left_legend_show, **kwargs)
+        plot_binomial_histogram(data2, ntrials, ax=axes[1],
+                              title=titles[1] if titles else None,
+                              fontsize=fontsize, hide_ylabel=True,
+                              legend_kwargs=right_legend_kwargs,
+                              legend_show=_right_legend_show, **kwargs)
+
     elif plot_type == 'scatter':
         fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
-        # Left plot - keep y-label
-        plot_switching_scatter(data1, ntrials, ax=axes[0], 
-                             title=titles[0] if titles else None, 
-                             fontsize=fontsize, hide_ylabel=False, **kwargs)
-        # Right plot - hide y-label since it's shared
-        plot_switching_scatter(data2, ntrials, ax=axes[1], 
-                             title=titles[1] if titles else None, 
-                             fontsize=fontsize, hide_ylabel=True, **kwargs)
-    
+        _left_legend_show = left_legend_show or (True, True)
+        _right_legend_show = right_legend_show or (True, True)
+        plot_switching_scatter(data1, ntrials, ax=axes[0],
+                             title=titles[0] if titles else None,
+                             fontsize=fontsize, hide_ylabel=False,
+                             legend_kwargs=left_legend_kwargs,
+                             legend_show=_left_legend_show, **kwargs)
+        plot_switching_scatter(data2, ntrials, ax=axes[1],
+                             title=titles[1] if titles else None,
+                             fontsize=fontsize, hide_ylabel=True,
+                             legend_kwargs=right_legend_kwargs,
+                             legend_show=_right_legend_show, **kwargs)
+
+    if ylim:       
+        ax[0].set_ylim(ylim)
+        
     plt.tight_layout()
     return fig, axes
 
@@ -487,12 +521,16 @@ def plot_Sn_variance(
     fontsize=12.5,
     ylim=None,
     markersize=3,
+    null_linewidth=1.5,
     band_alpha=0.12,
     legend_ncol=3,
     legend_kwargs=None,
     normalize='ratio',
     point_alpha=1.0,
     yscale='linear',
+    ytick_rotation=0,
+    xticks=None,
+    yticks=None,
 ):
     """
     Plot sample variance across trial sizes for MTJ TRNG Bernoulli trials,
@@ -664,7 +702,7 @@ def plot_Sn_variance(
         )
 
         # Reference line at z=0
-        ax.axhline(0.0, color='k', linewidth=2, label='Expected (z=0)')
+        ax.axhline(0.0, color='k', linewidth=null_linewidth, label='Expected (z=0)')
 
         ax.set_ylabel(
             r'$z$-score of $S_n$  $(H_0\!: B(n,\frac{1}{2}))$',
@@ -694,7 +732,7 @@ def plot_Sn_variance(
 
         # Reference line at 1.0
         ax.axhline(
-            1.0, color='k', linewidth=2,
+            1.0, color='k', linewidth=null_linewidth,
             label='Expected \nbinomial', zorder=1,
         )
 
@@ -726,7 +764,7 @@ def plot_Sn_variance(
         ref = stats_dict['reference']
         ax.plot(
             ref['Ns'], ref['binomial_var'],
-            color='k', linewidth=2,
+            color='k', linewidth=null_linewidth, 
             label=r'$np(1-p)$, $p=\frac{1}{2}$',
         )
 
@@ -756,7 +794,7 @@ def plot_Sn_variance(
         ax.plot(
             ref['Ns'], ref['binomial_var'] / ref['Ns'],
             color='k', linewidth=2,
-            label=r'$p(1-p)$, $p=\frac{1}{2}$',
+            label=r'$p(1-p)$,\,$p=\frac{1}{2}$',
         )
 
         ax.set_ylabel(r'$\widehat{\mathrm{Var}}(S_n) / n$', fontsize=fontsize)
@@ -767,6 +805,12 @@ def plot_Sn_variance(
     ax.set_yscale(yscale)
     ax.set_xlabel('Number of trials (n)', fontsize=fontsize)
     ax.tick_params(axis='both', which='major', labelsize=fontsize - 1)
+    ax.tick_params(axis='y', labelrotation=ytick_rotation)
+
+    if xticks is not None:
+        ax.set_xticks(xticks)
+    if yticks is not None:
+        ax.set_yticks(yticks)
 
     default_legend = {
         'fontsize': fontsize - 2,
@@ -792,7 +836,10 @@ def plot_entropy_vs_sp(
     xor_levels=None,
     width_cm=16,
     aspect=0.42,
+    markersize=8,
+    linewidth=1,
     fontsize=13,
+    legend_fontsize=12,
     reference_legend_title="This work",
     legend_y=1.0,
     legend_x=0.5,
@@ -862,10 +909,10 @@ def plot_entropy_vs_sp(
     plt.rcParams.update({
         'font.size': fontsize,
         'axes.labelsize': fontsize,
-        'xtick.labelsize': fontsize,
-        'ytick.labelsize': fontsize,
-        'legend.fontsize': fontsize - 3.5,
-        'legend.title_fontsize': fontsize - 3.5,
+        'xtick.labelsize': fontsize -1,
+        'ytick.labelsize': fontsize -1,
+        'legend.fontsize': legend_fontsize,
+        'legend.title_fontsize': fontsize - 1,
     })
 
     if ax is None:
@@ -898,7 +945,7 @@ def plot_entropy_vs_sp(
         sps = data.select(["switching_probability"]).to_numpy()
         entropies = data.select([entropy_col]).to_numpy()
         label = proc.capitalize() if proc == "raw" else proc.split('_')[0].upper()
-        (line,) = axl.plot(sps, entropies, markersize=8, label=label, alpha=alpha)
+        (line,) = axl.plot(sps, entropies, markersize=markersize, linewidth=linewidth, label=label, alpha=alpha)
         plot_data[proc] = {"sps": sps, "entropies": entropies, "_line": line}
 
     # Dotted IID overlay (only when iid_col is provided)
@@ -912,7 +959,7 @@ def plot_entropy_vs_sp(
                 data.select(["switching_probability"]).to_numpy(),
                 data.select([iid_col]).to_numpy(),
                 color=ref_line.get_color(), marker=ref_line.get_marker(),
-                markersize=8, linestyle=':',
+                markersize=markersize, linestyle=':', linewidth=linewidth,
             )
 
     # IID pass circles — on iid_col data if provided, otherwise on entropy_col
@@ -925,7 +972,7 @@ def plot_entropy_vs_sp(
         axl.plot(
             data.filter(iid_mask).select(["switching_probability"]).to_numpy(),
             data.filter(iid_mask).select([circle_col]).to_numpy(),
-            markersize=17, marker='o', markerfacecolor='none', markeredgecolor=(0, 0, 0, 0.7),  
+            markersize=markersize+9, marker='o', markerfacecolor='none', markeredgecolor=(0, 0, 0, 0.7),  
             markeredgewidth=1.5, linestyle='', color='black',
         )
 
@@ -936,7 +983,7 @@ def plot_entropy_vs_sp(
     axl.set_xticks(np.linspace(0, 1, 11, endpoint=True))
     axl.set_yticks(np.arange(0,11,2) / 10, minor=True)
 
-    axl.grid(axis='both', which='both')
+    #axl.grid(axis='both', which='both')
 
     if axh is None:
         return fig, axl, axh, plot_data
@@ -948,9 +995,9 @@ def plot_entropy_vs_sp(
     # IID pass label inside the plot as a mini-legend
     from matplotlib.lines import Line2D
     iid_handle = Line2D([0], [0], marker='o', color='black', linestyle='',
-                        markersize=9, markerfacecolor='none', markeredgewidth=1.5, markeredgecolor=(0, 0, 0, 0.7))
+                        markersize=markersize+2, markerfacecolor='none', markeredgewidth=1.5, markeredgecolor=(0, 0, 0, 0.7))
     axl.legend(handles=[iid_handle], labels=['Passed IID'],
-               loc='lower right', fontsize=fontsize - 2,
+               loc='lower right', fontsize=fontsize,
                handlelength=0.5, borderpad=0.4, framealpha=0.85)
 
     # Right panel: NIST entropy histogram
@@ -962,16 +1009,16 @@ def plot_entropy_vs_sp(
     # Derive reference lines from data
     raw_max = df.filter(pl.col("processing") == "raw")[entropy_col].max()
     xor_noniid_max = df.filter(pl.col("processing") != "raw")[entropy_col].max()
-    axh.axhline(raw_max, c='r', linewidth=2, label="Raw")
+    axh.axhline(raw_max, c='r', linewidth=linewidth, label="Raw")
     if iid_col is not None:
         if xor_noniid_max is not None:
             axh.axhline(xor_noniid_max, color='r', linestyle='--', linewidth=2, label="Non-IID max", alpha=0.7)
         xor_iid_max = df.filter(pl.col("processing") != "raw")[iid_col].max()
         if xor_iid_max is not None:
-            axh.axhline(xor_iid_max, color='r', linestyle=':', linewidth=2, label="IID max", alpha=0.7)
+            axh.axhline(xor_iid_max, color='r', linestyle=':', linewidth=linewidth, label="IID max", alpha=0.7)
     else:
         if xor_noniid_max is not None:
-            axh.axhline(xor_noniid_max, color='r', linestyle='--', linewidth=2, label="XOR max", alpha=0.7)
+            axh.axhline(xor_noniid_max, color='r', linestyle='--', linewidth=linewidth, label="XOR max", alpha=0.7)
 
     axh.set_yticks(np.linspace(0, 1, 11))
     axh.set_xticks(np.arange(0, 21, 5))
