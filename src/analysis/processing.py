@@ -240,10 +240,9 @@ def xorn_whitening(binary_data, n=2, overlap=0, verbose=False):
         # Start with first bit of each window (sampled every 'skip' positions)
         sum_arr = binary_data[::skip][:nout]
 
-        # Add remaining bits from each window using np.roll to shift
-        # np.roll shifts array so bit at position i moves to position 0
+        # Add remaining bits from each window using indexing to shift by 1 to n-1 positions
         for i in range(1,n):
-            sum_arr = sum_arr + binary_data[i::skip][:nout] #Use np.roll to add adjacent bits
+            sum_arr = sum_arr + binary_data[i::skip][:nout]
 
         # Final XOR via modulo 2
         xorn = sum_arr % 2
