@@ -45,6 +45,7 @@ duplicate_filenames_report.txt
 
 # Notebooks
 notebooks/*
+!notebooks/TEMPLATE_device_analysis.ipynb
 
 # Entropy source validation results
 esv/
