@@ -44,7 +44,7 @@ sample_plots/
 duplicate_filenames_report.txt
 
 # Notebooks
-notebooks/prng.ipynb
+notebooks/*
 
 # Entropy source validation results
 esv/
