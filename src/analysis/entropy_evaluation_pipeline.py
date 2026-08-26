@@ -1,4 +1,5 @@
 # src/analysis/entropy_evaluation.py
+import re
 import subprocess
 import hashlib
 import numpy as np
@@ -1190,7 +1191,7 @@ class EntropyEvaluationPipeline:
     
     def collect_entropy_results(self, device_id=None, process_names=None, output_csv=None,
                                 include_binary_stats=True, correlation_lags=None, corr_sequence_max_len=None,
-                                max_workers=None):
+                                max_workers=None, include_iid_details=False, skip_stats=False):
         """
         Collect entropy test results from all test files and compile into a CSV.
 
@@ -1203,6 +1204,10 @@ class EntropyEvaluationPipeline:
             corr_sequence_max_len: int number of terms in auto-correlation sum from sample 1 to N-k = corr_sequence_max_len
             max_workers: Number of parallel workers for binary stats computation.
                 None or 1 = serial (default). >1 = parallel via ProcessPoolExecutor.
+            include_iid_details: Whether to parse and include detailed IID test results
+                (chi-square scores/p-values, LRS results, permutation test pass count)
+            skip_stats: Skip binary statistics computation entirely (no mean, variance,
+                or autocorrelation). Overrides include_binary_stats when True.
 
         Returns:
             pd.DataFrame: DataFrame with entropy results
@@ -1249,6 +1254,7 @@ class EntropyEvaluationPipeline:
                         'processing': current_process,
                         'raw_hash': file_hash,
                         'switching_probability': None,
+                        'n_samples': None,
                         's_amplitude': None,
                         's_width': None,
                         'r_amplitude': None,
@@ -1293,6 +1299,15 @@ class EntropyEvaluationPipeline:
                         if parsed_result:
                             result.update(parsed_result)
                             self.logger.info(f"{test_type.capitalize()} results for {current_device}/{current_process}/{file_hash}: {parsed_result}")
+
+                        if include_iid_details and test_type == 'iid' and test_file.exists():
+                            try:
+                                with open(test_file, 'r') as f:
+                                    iid_content = f.read()
+                                iid_details = self._parse_iid_details(iid_content)
+                                result.update(iid_details)
+                            except Exception as e:
+                                self.logger.error(f"Error parsing IID details from {test_file}: {e}")
 
                     # Parse restart results — check new type-specific dirs, fall back to legacy layout
                     legacy_restart_dir = process_dir / 'restart' / file_hash
@@ -1344,7 +1359,7 @@ class EntropyEvaluationPipeline:
                     results_list.append(result)
 
         # Second pass: compute binary statistics (parallelizable)
-        if include_binary_stats and results_list:
+        if include_binary_stats and not skip_stats and results_list:
             use_parallel = max_workers is not None and max_workers > 1
 
             if use_parallel:
@@ -1380,7 +1395,8 @@ class EntropyEvaluationPipeline:
         # Reorder columns to match the expected format
         column_order = [
             'device', 'processing', 'raw_hash',
-            'switching_probability', 's_amplitude', 's_width',
+            'switching_probability', 'n_samples',
+            's_amplitude', 's_width',
             'r_amplitude', 'r_width', 'field',
             'iid_pass', 'iid_restart_pass', 'non_iid_restart_pass',
             'h_original_iid', 'h_original_non_iid',
@@ -1388,8 +1404,16 @@ class EntropyEvaluationPipeline:
             'h_final_iid', 'h_final_non_iid', 'h_final'
         ]
 
+        if include_iid_details:
+            column_order.extend([
+                'iid_chisq_indep_score', 'iid_chisq_indep_dof', 'iid_chisq_indep_pvalue',
+                'iid_chisq_gof_score', 'iid_chisq_gof_dof', 'iid_chisq_gof_pvalue',
+                'iid_lrs_pcol', 'iid_lrs_length', 'iid_lrs_pr_x_ge_1',
+                'iid_perm_passed',
+            ])
+
         # Add binary statistics columns if requested
-        if include_binary_stats:
+        if include_binary_stats and not skip_stats:
             column_order.extend(self._get_binary_statistics_column_names(correlation_lags))
         
         # Add missing columns with NaN
@@ -1399,7 +1423,18 @@ class EntropyEvaluationPipeline:
         
         # Reorder and select columns
         df = df[column_order]
-        
+
+        # Cast columns that should be integers to nullable integer type
+        nullable_int_cols = ['n_samples']
+        if include_iid_details:
+            nullable_int_cols.extend([
+                'iid_chisq_indep_dof', 'iid_chisq_gof_dof',
+                'iid_lrs_length', 'iid_perm_passed',
+            ])
+        for col in nullable_int_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(pd.Int64Dtype())
+
         # Save to CSV if path provided
         if output_csv:
             df.to_csv(output_csv, index=False)
@@ -1458,7 +1493,11 @@ class EntropyEvaluationPipeline:
                     h_original = float(h_line)
                 except ValueError:
                     self.logger.warning(f"Could not parse H_original value: {h_line}")
-                    return None       
+                    return None
+
+            m = re.search(r'Loaded (\d+) samples', content)
+            if m:
+                result['n_samples'] = int(m.group(1))
 
             if test_type == 'iid':
                 result['iid_pass'] = 'Passed' in content and 'Failed' not in content
@@ -1578,7 +1617,94 @@ class EntropyEvaluationPipeline:
         else:
             return None
 
-    def _get_binary_statistics(self, device_id, process_name, file_hash, 
+    def _parse_iid_details(self, content):
+        """
+        Parse detailed IID test results from ea_iid -v output.
+
+        Returns:
+            dict with iid_chisq_indep_score, iid_chisq_indep_dof, iid_chisq_indep_pvalue,
+            iid_chisq_gof_score, iid_chisq_gof_dof, iid_chisq_gof_pvalue,
+            iid_lrs_pcol, iid_lrs_length, iid_lrs_pr_x_ge_1, iid_perm_passed.
+            Missing fields are None.
+        """
+        result = {
+            'iid_chisq_indep_score': None,
+            'iid_chisq_indep_dof': None,
+            'iid_chisq_indep_pvalue': None,
+            'iid_chisq_gof_score': None,
+            'iid_chisq_gof_dof': None,
+            'iid_chisq_gof_pvalue': None,
+            'iid_lrs_pcol': None,
+            'iid_lrs_length': None,
+            'iid_lrs_pr_x_ge_1': None,
+            'iid_perm_passed': None,
+        }
+
+        lines = content.split('\n')
+
+        def _parse_chisq_block(start_idx):
+            score = dof = pvalue = None
+            for line in lines[start_idx + 1 : start_idx + 4]:
+                stripped = line.strip()
+                if stripped.startswith('score'):
+                    m = re.search(r'=\s*([\d.eE+-]+)', stripped)
+                    if m:
+                        score = float(m.group(1))
+                elif stripped.startswith('degrees of freedom'):
+                    m = re.search(r'=\s*(\d+)', stripped)
+                    if m:
+                        dof = int(m.group(1))
+                elif stripped.startswith('p-value'):
+                    m = re.search(r'=\s*([\d.eE+-]+)', stripped)
+                    if m:
+                        pvalue = float(m.group(1))
+            return score, dof, pvalue
+
+        for i, line in enumerate(lines):
+            if line.strip() == 'Chi square independence':
+                s, d, p = _parse_chisq_block(i)
+                result['iid_chisq_indep_score'] = s
+                result['iid_chisq_indep_dof'] = d
+                result['iid_chisq_indep_pvalue'] = p
+
+            elif line.strip() == 'Chi square goodness of fit':
+                s, d, p = _parse_chisq_block(i)
+                result['iid_chisq_gof_score'] = s
+                result['iid_chisq_gof_dof'] = d
+                result['iid_chisq_gof_pvalue'] = p
+
+            elif 'Literal Longest Repeated Substring results' in line:
+                for lrs_line in lines[i + 1 : i + 4]:
+                    stripped = lrs_line.strip()
+                    if stripped.startswith('P_col:'):
+                        m = re.search(r':\s*([\d.eE+-]+)', stripped)
+                        if m:
+                            result['iid_lrs_pcol'] = float(m.group(1))
+                    elif stripped.startswith('Length of LRS:'):
+                        m = re.search(r':\s*(\d+)', stripped)
+                        if m:
+                            result['iid_lrs_length'] = int(m.group(1))
+                    elif stripped.startswith('Pr(X >= 1):'):
+                        m = re.search(r':\s*([\d.eE+-]+)', stripped)
+                        if m:
+                            result['iid_lrs_pr_x_ge_1'] = float(m.group(1))
+
+            elif line.strip().startswith('----') and i > 0 and 'C[i][0]' in lines[i - 1]:
+                passed = 0
+                total = 0
+                for perm_line in lines[i + 1 :]:
+                    stripped = perm_line.strip()
+                    if not stripped or stripped.startswith('('):
+                        break
+                    total += 1
+                    if '*' not in stripped:
+                        passed += 1
+                if total > 0:
+                    result['iid_perm_passed'] = passed
+
+        return result
+
+    def _get_binary_statistics(self, device_id, process_name, file_hash,
                             correlation_lags=None, corr_sequence_max_len=None):
         """
         Compute statistics for a binary file.

@@ -48,7 +48,30 @@ def main():
     parser.add_argument("--workers", type=int, default=1,
                         help="Number of parallel workers for binary statistics (default: 1 = serial)")
 
+    parser.add_argument("--r-amplitude", dest="r_amplitude",
+                        help="Filter results to specific reset pulse amplitude(s), "
+                             "comma-separated (e.g., --r-amplitude=-0.6,-0.7)")
+
+    parser.add_argument("--include-iid-details", action="store_true",
+                        help="Include detailed IID test results (chi-square scores/p-values, "
+                             "LRS results, permutation test pass count) in the output CSV")
+    parser.add_argument("--no-stats", action="store_true",
+                        help="Skip binary statistics calculation (mean, variance, autocorrelation). "
+                             "Useful when only entropy estimates and IID test details are needed. "
+                             "Mutually exclusive with --lags and --lags-expr.")
+
     args = parser.parse_args()
+
+    if args.no_stats and (args.lags or args.lags_expr):
+        parser.error("--no-stats is mutually exclusive with --lags and --lags-expr")
+
+    # Parse comma-separated r_amplitude values
+    r_amplitude_values = None
+    if args.r_amplitude:
+        try:
+            r_amplitude_values = [float(x.strip()) for x in args.r_amplitude.split(",")]
+        except ValueError as e:
+            parser.error(f"Could not parse --r-amplitude values: {e}")
 
     # Resolve correlation lags
     correlation_lags = None
@@ -84,8 +107,13 @@ def main():
     print(f"Extracting entropy results...")
     print(f"Device: {args.device if args.device else 'All devices'}")
     print(f"Processes: {args.processes if args.processes else 'All processes'}")
-    print(f"Correlation lags: {correlation_lags if correlation_lags else 'Default (powers of 2, 2^0 to 2^20)'}")
+    if not args.no_stats:
+        print(f"Correlation lags: {correlation_lags if correlation_lags else 'Default (powers of 2, 2^0 to 2^20)'}")
     print(f"Workers: {args.workers}")
+    if r_amplitude_values:
+        print(f"r_amplitude filter: {r_amplitude_values}")
+    print(f"Include IID details: {args.include_iid_details}")
+    print(f"Skip stats: {args.no_stats}")
     print(f"Output file: {output_file}")
 
     # Collect results
@@ -93,11 +121,19 @@ def main():
         device_id=args.device,
         process_names=args.processes,
         output_csv=output_file,
-        correlation_lags=correlation_lags,
+        correlation_lags=correlation_lags if not args.no_stats else None,
         corr_sequence_max_len=1_000_000,
-        max_workers=args.workers
+        max_workers=args.workers,
+        include_iid_details=args.include_iid_details,
+        skip_stats=args.no_stats,
     )
     
+    # Post-collection filtering
+    if r_amplitude_values and len(df) > 0:
+        df = df[df['r_amplitude'].isin(r_amplitude_values)]
+        df.to_csv(output_file, index=False)
+        print(f"Filtered to r_amplitude in {r_amplitude_values}: {len(df)} rows remaining")
+
     print(f"\nExtracted {len(df)} results to {output_file}")
     
     # Show summary
