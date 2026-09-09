@@ -3,6 +3,7 @@
 Test script for binary statistics computation.
 Usage: python test_binary_stats.py --device 011_08 --process raw --hash <file_hash>
 """
+import json
 import sys
 import argparse
 from pathlib import Path
@@ -13,6 +14,27 @@ sys.path.insert(0, str(project_root))
 
 from src.parquet_data_manager import ParquetExperimentalDataManager
 from src.analysis.entropy_evaluation_pipeline import EntropyEvaluationPipeline
+
+
+def load_ea_binaries_path():
+    """Load the SP800-90B EntropyAssessment binaries path from config.json"""
+    config_path = Path(__file__).parents[1] / 'config' / 'config.json'
+    if not config_path.exists():
+        raise FileNotFoundError(
+            "Config file not found. Please copy config.template.json to "
+            "config.json and fill in the required values."
+        )
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    ea_binaries_path = config.get('ea_binaries', {}).get('path')
+    if not ea_binaries_path:
+        raise ValueError("ea_binaries.path not found in config.json")
+
+    return ea_binaries_path
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Test binary statistics computation")
@@ -26,7 +48,7 @@ def main():
     dm = ParquetExperimentalDataManager()
     pipeline = EntropyEvaluationPipeline(
         dm, 
-        ea_binaries_path="/Users/shannonegan/Documents/DSV/StochastIQ/umn/SP800-90B_EntropyAssessment/cpp"
+        ea_binaries_path=load_ea_binaries_path()
     )
     
     # Construct path to binary file
@@ -55,15 +77,21 @@ def main():
     print(f"\nComputing binary statistics for: {bin_file}")
     print("="*80)
     
-    result = pipeline._compute_binary_statistics(bin_file)
+    result = pipeline._get_binary_statistics(
+        device_id=args.device,
+        process_name=args.process,
+        file_hash=bin_file.stem
+    )
     
-    if result:
+    if result and result.get('mean') is not None:
         print(f"\nResults:")
         print(f"  Mean (P(X=1)): {result['mean']:.6f}")
         print(f"  Variance: {result['variance']:.6f}")
         print(f"\n  Correlation coefficients:")
-        for lag, corr in sorted(result['correlations'].items()):
-            print(f"    Lag {lag:4d}: {corr:+.6f}")
+        for key, corr in result.items():
+            if key.startswith('corr_lag_') and corr is not None:
+                lag = int(key.removeprefix('corr_lag_'))
+                print(f"    Lag {lag:8d}: {corr:+.6f}")
     else:
         print("Failed to compute statistics")
 
