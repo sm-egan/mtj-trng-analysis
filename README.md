@@ -121,15 +121,18 @@ This method stores all data directly in a SQLite database rather than using Parq
 
 ### 4. Opening Jupyter Notebook for Data Analysis
 
+The repository ships a single template notebook, `notebooks/TEMPLATE_device_analysis.ipynb`, with the standard imports, plot style config, and data-loading cells for a per-device analysis. Copy it rather than editing it directly:
+
 ```bash
 # Register the kernel for Jupyter
 python -m ipykernel install --user --name=venv
 
-# Start Jupyter notebook for analysis
-jupyter notebook notebooks/parquet_data_import.ipynb
+# Start a new analysis from the template
+cp notebooks/TEMPLATE_device_analysis.ipynb notebooks/Device_011_08.ipynb
+jupyter notebook notebooks/Device_011_08.ipynb
 ```
 
-A sample analysis notebook is provided to demonstrate the new Parquet-based data access methods.
+Everything in `notebooks/` except the template is gitignored, so your working notebooks stay local. If you improve the shared setup cells, make the change in the template and commit it.
 
 ## Analyzing Data
 
