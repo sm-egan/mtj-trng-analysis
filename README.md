@@ -1,123 +1,47 @@
-# MTJ-TRNG Analysis Setup Guide
+# MTJ-TRNG Analysis
 
-This repository contains tools for analyzing MTJ-TRNG experimental data from Google Drive.
+Analysis code for MTJ-based true random number generators (TRNGs). This repository implements the analysis described in
 
-## Overview
+> Q. Jia, S. Egan, Y. Lv and J.-P. Wang, "Widening the High-Entropy Operating Window of
+> Perpendicular Magnetic Tunnel Junction TRNGs via Multi-Bit XOR Whitening,"
+> *IEEE Transactions on Electron Devices*, 2026.
+> [IEEE Xplore](https://ieeexplore.ieee.org/abstract/document/11627766)
 
-The system imports and processes experimental voltage measurements from Magnetic Tunnel Junction (MTJ) devices used for True Random Number Generation (TRNG). Data is stored in Apache Parquet file format for high compression and fast retrieval of numerical data.
+It processes voltage measurements from Magnetic Tunnel Junction (MTJ) devices into bitstreams, applies multi-bit XOR whitening, and runs NIST SP 800-90B entropy assessments on the results. Measurement data is stored in Apache Parquet files with run metadata in SQLite.
 
 ## Prerequisites
 
 - Python 3.8 or higher
-- Access to the Google Drive folder containing experimental data
-- Git (for cloning the repository)
+- The NIST [SP800-90B_EntropyAssessment](https://github.com/usnistgov/SP800-90B_EntropyAssessment) tools (`ea_iid`, `ea_non_iid`), built locally
 
 ## Setup Instructions
 
 ### 1. Environment Setup
 
 ```bash
-# Clone the repository
-git clone [repository-url]
+git clone https://github.com/sm-egan/mtj-trng-analysis.git
 cd mtj-trng-analysis
 
-# Create and activate virtual environment
 python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
 
-# On Windows:
-venv\Scripts\activate
-
-# On macOS/Linux:
-source venv/bin/activate
-
-# Install requirements
 pip install -r requirements.txt
 ```
 
-### 2. Google Drive Setup
-
-1. Request access to the experiment data folder from the project admin if you don't already have it
-2. Set up Google Drive API credentials (two options):
-
-   **Option A: Use existing credentials**
-   - Ask the project admin for the service_account.json file
-   - Place it in the config directory
-
-   **Option B: Create your own credentials**
-   - Go to the Google Cloud Console
-   - Create a new project or select an existing one
-   - Enable the Google Drive API for your project
-   - Create a Service Account:
-     - Go to "IAM & Admin" > "Service Accounts"
-     - Click "Create Service Account"
-     - Give it a name and description
-     - Grant it Basic > Editor role
-     - Click "Create Keys" and select JSON format
-     - Save the downloaded JSON file as service_account.json in the config directory
-
-3. Share your Drive folder with the service account email (found in the JSON file)
-
-4. Create your configuration file:
-   ```bash
-   # Copy the template
-   cp config/config.template.json config/config.json
-   ```
-
-   Edit config.json to include:
-   ```json
-   {
-     "drive": {
-       "credentials_path": "config/service_account.json",
-       "default_folder_id": "your_folder_id_here"
-     },
-     "database": {
-       "path": "database/mtj_switching_data_parquet.db"
-     }
-   }
-   ```
-
-### 3. Running Data Import (Recommended Parquet Method)
-
-The Parquet storage method is strongly recommended as it offers:
-
-- Significantly reduced storage requirements
-- Much faster data access for analysis
-- Better organization of large datasets
+### 2. Configuration
 
 ```bash
-# Make sure your virtual environment is activated
-python scripts/import_drive_data_parquet.py
+cp config/config.template.json config/config.json
 ```
 
-Optional parameters:
-```bash
-# Specify a different folder ID
-python scripts/import_drive_data_parquet.py --folder_id "your_alternative_folder_id"
+Set `ea_binaries.path` to the directory containing the built `ea_iid` and `ea_non_iid` binaries.
 
-# Import a specific number of files (useful for testing)
-python scripts/import_drive_data_parquet.py --n_files 10
+### 3. Getting Data
 
-# Import randomly selected files instead of first N files
-python scripts/import_drive_data_parquet.py --n_files 10 --shuffle_files True
+The repository includes code to import raw measurement files from Google Drive (`scripts/import_drive_data_parquet.py`, configured via the `drive` section of `config.json`). You don't need it to use the analysis: you can start from your own data instead, either
 
-# Enable debug logging
-python scripts/import_drive_data_parquet.py --logging_level DEBUG
-```
-
-### Alternative: Legacy SQLite Import Method
-
-The original SQLite storage method has been preserved for backward compatibility or when memory usage is a concern.
-
-```bash
-# Make sure your virtual environment is activated
-python scripts/import_drive_data.py
-```
-
-This method stores all data directly in a SQLite database rather than using Parquet files. It may be useful if:
-
-- You're running on a system with very limited disk space
-- You need compatibility with older analysis tools
-- You're dealing with a very small dataset where the performance benefits are minimal
+- Parquet measurement files plus run metadata, loaded through `ParquetExperimentalDataManager` (`src/parquet_data_manager.py`), or
+- 1-bit `.bin` bitstreams, passed straight to the SP 800-90B entropy evaluation in `src/analysis/entropy_evaluation_pipeline.py`.
 
 ### 4. Opening Jupyter Notebook for Data Analysis
 
@@ -165,10 +89,5 @@ switching_df = calculate_switching_probability(stacked_measurements, group_by='r
 
 Common issues:
 
-- If you see credential errors, check that service_account.json is in the correct location
-- If the script can't find files, verify your folder ID is correct
+- `ea_iid not found`: check `ea_binaries.path` in `config/config.json` points at the built SP 800-90B tools
 - For environment issues, ensure you've activated the virtual environment before running scripts
-
-## Questions?
-
-Contact the project admin for assistance or access requests.
